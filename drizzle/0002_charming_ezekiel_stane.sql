@@ -1,0 +1,1 @@
+ALTER TABLE `users` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-17 19:06:07.499';

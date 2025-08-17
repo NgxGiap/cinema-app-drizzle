@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1755456025438,
+      "tag": "0000_ordinary_diamondback",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1755456762243,
+      "tag": "0001_breezy_blink",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1755457567510,
+      "tag": "0002_charming_ezekiel_stane",
+      "breakpoints": true
+    }
+  ]
+}
