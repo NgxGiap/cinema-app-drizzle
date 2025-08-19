@@ -1,4 +1,11 @@
-import { mysqlTable, serial, varchar, datetime } from 'drizzle-orm/mysql-core';
+import {
+  mysqlTable,
+  serial,
+  varchar,
+  datetime,
+  text,
+  int,
+} from 'drizzle-orm/mysql-core';
 
 export const users = mysqlTable('users', {
   id: serial('id').primaryKey(),
@@ -9,5 +16,17 @@ export const users = mysqlTable('users', {
   createdAt: datetime('created_at').notNull().default(new Date()),
 });
 
+export const movies = mysqlTable('movies', {
+  id: serial('id').primaryKey(),
+  title: varchar('title', { length: 255 }).notNull(),
+  description: text('description'),
+  duration: int('duration').notNull(), // phút
+  releaseDate: datetime('release_date').notNull(),
+  createdAt: datetime('created_at').notNull().default(new Date()),
+});
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+
+export type Movie = typeof movies.$inferSelect;
+export type NewMovie = typeof movies.$inferInsert;

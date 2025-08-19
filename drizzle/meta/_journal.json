@@ -22,6 +22,20 @@
       "when": 1755457567510,
       "tag": "0002_charming_ezekiel_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1755531336937,
+      "tag": "0003_melodic_masque",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1755531593426,
+      "tag": "0004_fluffy_ultimates",
+      "breakpoints": true
     }
   ]
 }
