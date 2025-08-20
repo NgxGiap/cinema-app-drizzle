@@ -1,6 +1,6 @@
+import { sql } from 'drizzle-orm';
 import {
   mysqlTable,
-  serial,
   varchar,
   datetime,
   text,
@@ -8,7 +8,9 @@ import {
 } from 'drizzle-orm/mysql-core';
 
 export const users = mysqlTable('users', {
-  id: serial('id').primaryKey(),
+  id: varchar('id', { length: 36 })
+    .primaryKey()
+    .default(sql`(uuid())`),
   name: varchar('name', { length: 100 }).notNull(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   password: varchar('password', { length: 255 }).notNull(),
@@ -17,7 +19,9 @@ export const users = mysqlTable('users', {
 });
 
 export const movies = mysqlTable('movies', {
-  id: serial('id').primaryKey(),
+  id: varchar('id', { length: 36 })
+    .primaryKey()
+    .default(sql`(uuid())`),
   title: varchar('title', { length: 255 }).notNull(),
   description: text('description'),
   duration: int('duration').notNull(), // phút
