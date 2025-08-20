@@ -12,8 +12,8 @@ type Header = {
   code: number;
   message: string;
   timestamp: string;
-  requestId?: string; // optional
-  path?: string; // optional
+  requestId?: string;
+  path?: string;
   pagination?: Pagination;
 };
 
@@ -49,12 +49,12 @@ export function responseWrapper(
     return this.status(code).json(body);
   };
 
-  res.fail = function (message: string, code = 400, details?: unknown) {
+  res.fail = function <E = null>(message: string, code = 400, details?: E) {
     const data =
-      process.env.NODE_ENV === 'development' && details
-        ? (details as any)
+      process.env.NODE_ENV === 'development' && typeof details !== 'undefined'
+        ? details
         : null;
-    const body: ApiResponse<null> = {
+    const body: ApiResponse<E> = {
       header: buildHeader(req, false, code, message),
       data,
     };

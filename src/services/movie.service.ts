@@ -5,8 +5,8 @@ import { eq, count } from 'drizzle-orm';
 
 type CreateMovieInput = {
   title: string;
-  duration: number; // phút
-  releaseDate: Date; // hoặc string 'YYYY-MM-DD' nếu dùng MySQL DATE
+  duration: number;
+  releaseDate: Date;
   description?: string;
 };
 
@@ -29,8 +29,7 @@ export async function create(input: CreateMovieInput) {
     title: input.title,
     description: input.description ?? null,
     duration: input.duration,
-    // Nếu schema là DATE, truyền dạng 'YYYY-MM-DD' hoặc new Date() tùy bạn định nghĩa
-    releaseDate: input.releaseDate as any,
+    releaseDate: input.releaseDate,
   });
   const [row] = await db
     .select()
