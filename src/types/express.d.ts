@@ -1,4 +1,4 @@
-import 'express';
+import 'express-serve-static-core';
 import type { JwtUser } from '../utils/auth/types';
 
 declare module 'express-serve-static-core' {
@@ -8,6 +8,6 @@ declare module 'express-serve-static-core' {
   }
   interface Response {
     ok: <T>(data: T, message?: string, code?: number) => this;
-    fail: (message: string, code?: number, details?: unknown) => this;
+    fail: <E = null>(message: string, code?: number, details?: E) => this;
   }
 }
