@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { db } from '../db';
 import { movies } from '../db/schema';
 import { eq, count } from 'drizzle-orm';
+import { NotFoundError } from '../utils/errors/base';
 
 type CreateMovieInput = {
   title: string;
@@ -31,12 +32,15 @@ export async function create(input: CreateMovieInput) {
     duration: input.duration,
     releaseDate: input.releaseDate,
   });
+
   const [row] = await db
     .select()
     .from(movies)
     .where(eq(movies.id, id))
     .limit(1);
-  return row!;
+
+  if (!row) throw new Error('Failed to create movie');
+  return row;
 }
 
 export async function getById(id: string) {
@@ -45,5 +49,49 @@ export async function getById(id: string) {
     .from(movies)
     .where(eq(movies.id, id))
     .limit(1);
-  return row || null;
+
+  if (!row) throw new NotFoundError('Movie not found');
+  return row;
+}
+
+export async function update(id: string, input: Partial<CreateMovieInput>) {
+  const [existingMovie] = await db
+    .select()
+    .from(movies)
+    .where(eq(movies.id, id))
+    .limit(1);
+
+  if (!existingMovie) throw new NotFoundError('Movie not found');
+
+  await db
+    .update(movies)
+    .set({
+      title: input.title ?? existingMovie.title,
+      description: input.description ?? existingMovie.description,
+      duration: input.duration ?? existingMovie.duration,
+      releaseDate: input.releaseDate ?? existingMovie.releaseDate,
+    })
+    .where(eq(movies.id, id));
+
+  const [updatedRow] = await db
+    .select()
+    .from(movies)
+    .where(eq(movies.id, id))
+    .limit(1);
+
+  if (!updatedRow) throw new Error('Failed to update movie');
+  return updatedRow;
+}
+
+export async function remove(id: string) {
+  const [existingMovie] = await db
+    .select()
+    .from(movies)
+    .where(eq(movies.id, id))
+    .limit(1);
+
+  if (!existingMovie) throw new NotFoundError('Movie not found');
+
+  await db.delete(movies).where(eq(movies.id, id));
+  return true;
 }
