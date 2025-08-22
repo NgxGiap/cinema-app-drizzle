@@ -58,7 +58,8 @@ module.exports = [
       ],
 
       // 🔹 Một số rule hay dùng
-      "no-console": "warn", // cảnh báo console.log
+      "no-console": "off",
+      "any": "off",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },

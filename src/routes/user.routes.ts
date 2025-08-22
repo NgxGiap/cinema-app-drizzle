@@ -1,9 +1,8 @@
 import { Router } from 'express';
-import { getAllUsers } from '../controllers/user.controller';
-import { authMiddleware, isAdmin } from '../middlewares/auth';
-
-const router = Router();
-
-router.get('/', authMiddleware, isAdmin, getAllUsers);
-
-export default router;
+import * as c from '../controllers/user.controller';
+const r = Router();
+r.get('/', c.listUsers);
+r.get('/:id', c.getUser);
+r.post('/', c.createUser);
+r.delete('/:id', c.deleteUser);
+export default r;

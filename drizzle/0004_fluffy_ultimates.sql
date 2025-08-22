@@ -1,0 +1,2 @@
+ALTER TABLE `movies` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-18 15:39:53.416';--> statement-breakpoint
+ALTER TABLE `users` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-18 15:39:53.415';
