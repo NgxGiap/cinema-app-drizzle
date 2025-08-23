@@ -26,7 +26,27 @@ export async function createMovie(
   next: NextFunction,
 ) {
   try {
-    const created = await svc.create(req.body);
+    const { title, description, duration, releaseDate } = req.body;
+
+    if (!title || !duration || !releaseDate) {
+      return res.fail(
+        'Missing required fields: title, duration, releaseDate',
+        400,
+      );
+    }
+
+    const parsedDate = new Date(releaseDate);
+    if (isNaN(parsedDate.getTime())) {
+      return res.fail('Invalid releaseDate format. Use YYYY-MM-DD', 400);
+    }
+
+    const created = await svc.create({
+      title,
+      description,
+      duration: Number(duration),
+      releaseDate: parsedDate,
+    });
+
     return res.ok(created, 'Movie created', 201);
   } catch (error) {
     next(error);
@@ -52,7 +72,21 @@ export async function updateMovie(
   next: NextFunction,
 ) {
   try {
-    const updated = await svc.update(req.params.id, req.body);
+    const { releaseDate, ...rest } = req.body;
+    let parsedDate: Date | undefined = undefined;
+
+    if (releaseDate) {
+      parsedDate = new Date(releaseDate);
+      if (isNaN(parsedDate.getTime())) {
+        return res.fail('Invalid releaseDate format. Use YYYY-MM-DD', 400);
+      }
+    }
+
+    const updated = await svc.update(req.params.id, {
+      ...rest,
+      ...(parsedDate ? { releaseDate: parsedDate } : {}),
+    });
+
     return res.ok(updated, 'Movie updated');
   } catch (error) {
     next(error);
