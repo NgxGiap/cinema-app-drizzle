@@ -4,4 +4,6 @@ const r = Router();
 r.get('/', c.listMovies);
 r.post('/', c.createMovie);
 r.get('/:id', c.getMovie);
+r.put('/:id', c.updateMovie);
+r.delete('/:id', c.deleteMovie);
 export default r;

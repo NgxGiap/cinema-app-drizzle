@@ -19,3 +19,11 @@ export async function getMovie(req: Request, res: Response) {
   const row = await svc.getById(req.params.id);
   return row ? res.ok(row, 'Movie detail') : res.fail('Movie not found', 404);
 }
+export async function updateMovie(req: Request, res: Response) {
+  const updated = await svc.update(req.params.id, req.body);
+  return res.ok(updated, 'Movie updated');
+}
+export async function deleteMovie(req: Request, res: Response) {
+  await svc.remove(req.params.id);
+  return res.ok(null, 'Movie deleted');
+}
