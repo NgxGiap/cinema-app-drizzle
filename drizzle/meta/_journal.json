@@ -50,6 +50,13 @@
       "when": 1755691731925,
       "tag": "0006_cuddly_cyclops",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1755940896697,
+      "tag": "0007_fair_white_tiger",
+      "breakpoints": true
     }
   ]
 }
