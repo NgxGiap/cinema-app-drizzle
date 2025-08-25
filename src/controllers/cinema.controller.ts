@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as svc from '../services/cinema.service';
+import { makePagination } from '../utils/http';
 
 type CinemaFilters = {
   city?: string;
@@ -11,16 +12,20 @@ export async function listCinemas(req: Request, res: Response) {
   const pageSize = Number(req.query.pageSize ?? 20);
 
   const filters: CinemaFilters = {};
-  if (typeof req.query.city === 'string' && req.query.city.trim() !== '') {
+  if (typeof req.query.city === 'string' && req.query.city.trim()) {
     filters.city = req.query.city.trim();
   }
   if (typeof req.query.isActive === 'string') {
     filters.isActive = req.query.isActive === 'true';
   }
 
-  const where = Object.keys(filters).length > 0 ? filters : undefined;
-  const data = await svc.list(page, pageSize, where);
-  return res.json(data);
+  const where = Object.keys(filters).length ? filters : undefined;
+  const { items, total } = await svc.list(page, pageSize, where);
+
+  return res.ok(
+    { items, pagination: makePagination(page, pageSize, total) },
+    'Cinemas fetched',
+  );
 }
 
 export async function createCinema(
