@@ -1,46 +1,81 @@
 export enum Role {
-  SUPER_ADMIN = 'SUPER_ADMIN',
-  ADMIN = 'ADMIN',
-  MANAGER = 'MANAGER',
-  STAFF = 'STAFF',
-  CUSTOMER = 'CUSTOMER',
-  GUEST = 'GUEST',
+  ADMIN = 'admin',
+  MANAGER = 'manager',
+  STAFF = 'staff',
+  USER = 'user',
 }
 
 export enum Permission {
+  // User management
   MANAGE_USERS = 'MANAGE_USERS',
+  VIEW_USERS = 'VIEW_USERS',
+
+  // Movie management
   MANAGE_MOVIES = 'MANAGE_MOVIES',
-  MANAGE_SHOWTIMES = 'MANAGE_SHOWTIMES',
-  MANAGE_THEATERS = 'MANAGE_THEATERS',
+  VIEW_MOVIES = 'VIEW_MOVIES',
+
+  // Theater/Cinema management
+  MANAGE_CINEMAS = 'MANAGE_CINEMAS',
+  VIEW_CINEMAS = 'VIEW_CINEMAS',
+
+  // Seat management
+  MANAGE_SEATS = 'MANAGE_SEATS',
+  VIEW_SEATS = 'VIEW_SEATS',
+
+  // Booking management
   MANAGE_BOOKINGS = 'MANAGE_BOOKINGS',
-  ISSUE_TICKETS = 'ISSUE_TICKETS',
-  REFUND_TICKETS = 'REFUND_TICKETS',
+  VIEW_BOOKINGS = 'VIEW_BOOKINGS',
+  CREATE_BOOKING = 'CREATE_BOOKING',
+
+  // Reports
   VIEW_REPORTS = 'VIEW_REPORTS',
 }
 
 export const RolePermissions: Record<Role, Permission[]> = {
-  [Role.SUPER_ADMIN]: Object.values(Permission),
   [Role.ADMIN]: [
+    // Full access to everything
     Permission.MANAGE_USERS,
+    Permission.VIEW_USERS,
     Permission.MANAGE_MOVIES,
-    Permission.MANAGE_SHOWTIMES,
-    Permission.MANAGE_THEATERS,
+    Permission.VIEW_MOVIES,
+    Permission.MANAGE_CINEMAS,
+    Permission.VIEW_CINEMAS,
+    Permission.MANAGE_SEATS,
+    Permission.VIEW_SEATS,
     Permission.MANAGE_BOOKINGS,
+    Permission.VIEW_BOOKINGS,
+    Permission.CREATE_BOOKING,
     Permission.VIEW_REPORTS,
   ],
   [Role.MANAGER]: [
+    // Can manage content and bookings, view users
+    Permission.VIEW_USERS,
     Permission.MANAGE_MOVIES,
-    Permission.MANAGE_SHOWTIMES,
+    Permission.VIEW_MOVIES,
+    Permission.MANAGE_CINEMAS,
+    Permission.VIEW_CINEMAS,
+    Permission.MANAGE_SEATS,
+    Permission.VIEW_SEATS,
     Permission.MANAGE_BOOKINGS,
-    Permission.ISSUE_TICKETS,
-    Permission.REFUND_TICKETS,
+    Permission.VIEW_BOOKINGS,
+    Permission.CREATE_BOOKING,
     Permission.VIEW_REPORTS,
   ],
   [Role.STAFF]: [
-    Permission.ISSUE_TICKETS,
-    Permission.REFUND_TICKETS,
+    // Can handle bookings and view content
+    Permission.VIEW_MOVIES,
+    Permission.VIEW_CINEMAS,
+    Permission.VIEW_SEATS,
     Permission.MANAGE_BOOKINGS,
+    Permission.VIEW_BOOKINGS,
+    Permission.CREATE_BOOKING,
   ],
-  [Role.CUSTOMER]: [Permission.MANAGE_BOOKINGS],
-  [Role.GUEST]: [],
+  [Role.USER]: [
+    // Basic user permissions
+    Permission.VIEW_MOVIES,
+    Permission.VIEW_CINEMAS,
+    Permission.VIEW_SEATS,
+    Permission.CREATE_BOOKING,
+    Permission.VIEW_BOOKINGS, // Own bookings only
+  ],
 };

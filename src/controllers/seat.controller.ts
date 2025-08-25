@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import * as svc from '../services/seat.service.js';
 import type { SeatFilters } from '../services/seat.service.js';
 
-type SeatType = 'regular' | 'vip' | 'couple' | 'disabled'; // tránh union có undefined
+type SeatType = 'regular' | 'vip' | 'couple' | 'disabled';
 
 export async function listSeats(req: Request, res: Response) {
   const page = Number(req.query.page ?? 1);
@@ -19,7 +19,7 @@ export async function listSeats(req: Request, res: Response) {
   if (typeof req.query.type === 'string' && req.query.type.trim() !== '') {
     const t = req.query.type.trim();
     if (['regular', 'vip', 'couple', 'disabled'].includes(t)) {
-      filters.type = t as SeatType; // ✅ không còn undefined trong union
+      filters.type = t as SeatType;
     }
   }
   if (typeof req.query.row === 'string' && req.query.row.trim() !== '') {
@@ -41,7 +41,7 @@ export async function createSeat(req: Request, res: Response) {
     row: string;
     column: number | string;
     type?: SeatType;
-    price: number | string; // schema hiện là string
+    price: number | string;
     isActive?: boolean;
   };
 
@@ -51,7 +51,7 @@ export async function createSeat(req: Request, res: Response) {
     row: String(body.row),
     column: Number(body.column),
     type: (body.type ?? 'regular') as SeatType,
-    price: String(Number(body.price)), // ✅ ép về string số
+    price: String(Number(body.price)),
     isActive: typeof body.isActive === 'boolean' ? body.isActive : true,
   });
 
@@ -124,11 +124,6 @@ export async function deleteSeat(req: Request, res: Response) {
   return res.json(result);
 }
 
-/* -----------------------------
- *  Các alias/handler bổ sung để khớp routes hiện có
- * ----------------------------*/
-
-// POST /seats/bulk
 export const createMultipleSeats = bulkCreateSeats;
 
 // DELETE /seats/bulk    body: { ids: string[] }

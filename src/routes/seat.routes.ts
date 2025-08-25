@@ -1,19 +1,54 @@
 import { Router } from 'express';
 import * as c from '../controllers/seat.controller';
+import { requireAuth, optionalAuth } from '../middlewares/auth';
+import { authorize } from '../middlewares/authorize';
+import { Permission } from '../utils/auth/roles';
+import {
+  validateSeatCreation,
+  validatePagination,
+} from '../middlewares/validation';
 
 const r = Router();
 
-// Main CRUD routes
-r.get('/', c.listSeats);
-r.post('/', c.createSeat);
-r.post('/bulk', c.createMultipleSeats);
-r.delete('/bulk', c.deleteMultipleSeats);
-r.get('/:id', c.getSeat);
-r.put('/:id', c.updateSeat);
-r.delete('/:id', c.deleteSeat);
+// Public routes for viewing seats
+r.get('/', optionalAuth, validatePagination, c.listSeats);
 
-// Utility routes
-r.get('/cinema/:cinemaId', c.getSeatsByCinema);
-r.get('/cinema/:cinemaId/map', c.getSeatMap);
+r.get(
+  '/cinema/:cinemaId',
+  optionalAuth,
+  validatePagination,
+  c.getSeatsByCinema,
+);
+
+r.get('/cinema/:cinemaId/map', optionalAuth, c.getSeatMap);
+
+r.get('/:id', optionalAuth, c.getSeat);
+
+// Protected routes for seat management - Admin/Manager only
+r.post(
+  '/',
+  requireAuth,
+  authorize(Permission.MANAGE_SEATS),
+  validateSeatCreation,
+  c.createSeat,
+);
+
+r.post(
+  '/bulk',
+  requireAuth,
+  authorize(Permission.MANAGE_SEATS),
+  c.createMultipleSeats,
+);
+
+r.put('/:id', requireAuth, authorize(Permission.MANAGE_SEATS), c.updateSeat);
+
+r.delete('/:id', requireAuth, authorize(Permission.MANAGE_SEATS), c.deleteSeat);
+
+r.delete(
+  '/bulk',
+  requireAuth,
+  authorize(Permission.MANAGE_SEATS),
+  c.deleteMultipleSeats,
+);
 
 export default r;
