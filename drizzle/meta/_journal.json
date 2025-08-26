@@ -57,6 +57,13 @@
       "when": 1755940896697,
       "tag": "0007_fair_white_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1756195260746,
+      "tag": "0008_clear_scrambler",
+      "breakpoints": true
     }
   ]
 }

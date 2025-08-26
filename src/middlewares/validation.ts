@@ -125,3 +125,64 @@ export const validatePagination = [
     .withMessage('Page size must be between 1 and 100'),
   handleValidationErrors,
 ];
+
+export const validateShowtimeCreation = [
+  body('movieId')
+    .notEmpty()
+    .withMessage('Movie ID is required')
+    .isUUID()
+    .withMessage('Valid movie ID required'),
+  body('cinemaId')
+    .notEmpty()
+    .withMessage('Cinema ID is required')
+    .isUUID()
+    .withMessage('Valid cinema ID required'),
+  body('showDate')
+    .notEmpty()
+    .withMessage('Show date is required')
+    .isISO8601()
+    .withMessage('Valid date required (YYYY-MM-DD)'),
+  body('showTime')
+    .notEmpty()
+    .withMessage('Show time is required')
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/)
+    .withMessage('Valid time required (HH:MM:SS)'),
+  body('price')
+    .isNumeric()
+    .withMessage('Price must be a number')
+    .custom((value) => {
+      const num = Number(value);
+      if (num <= 0) {
+        throw new Error('Price must be greater than 0');
+      }
+      return true;
+    }),
+  handleValidationErrors,
+];
+
+export const validateShowtimeUpdate = [
+  body('movieId').optional().isUUID().withMessage('Valid movie ID required'),
+  body('cinemaId').optional().isUUID().withMessage('Valid cinema ID required'),
+  body('showDate')
+    .optional()
+    .isISO8601()
+    .withMessage('Valid date required (YYYY-MM-DD)'),
+  body('showTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/)
+    .withMessage('Valid time required (HH:MM:SS)'),
+  body('price')
+    .optional()
+    .isNumeric()
+    .withMessage('Price must be a number')
+    .custom((value) => {
+      if (value !== undefined) {
+        const num = Number(value);
+        if (num <= 0) {
+          throw new Error('Price must be greater than 0');
+        }
+      }
+      return true;
+    }),
+  handleValidationErrors,
+];

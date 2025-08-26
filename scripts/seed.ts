@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import { db } from '../src/db';
-import { users, movies, seats, cinemas } from '../src/db/schema';
+import { users, movies, seats, cinemas, showtimes } from '../src/db/schema';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import { and, eq, sql } from 'drizzle-orm';
 
 async function seed() {
   try {
@@ -105,6 +106,80 @@ async function seed() {
 
     await db.insert(seats).values(allSeats);
     console.log(`✅ Seats seeded successfully! (${allSeats.length})`);
+
+    const today = new Date();
+    const showtimeList: (typeof showtimes.$inferInsert)[] = [];
+
+    // Lấy movies và cinemas đã tạo
+    const movieList = await db.select().from(movies);
+
+    // Tạo lịch chiếu cho 7 ngày tới
+    const times = ['09:00:00', '12:00:00', '15:00:00', '18:00:00', '21:00:00'];
+
+    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+      const currentDate = new Date(today);
+      currentDate.setDate(today.getDate() + dayOffset);
+
+      for (const movie of movieList) {
+        for (const cinema of cinemaList) {
+          // Random 2-4 suất chiếu mỗi ngày cho mỗi phim tại mỗi rạp
+          const numShowtimes = Math.floor(Math.random() * 3) + 2;
+          const selectedTimes = times
+            .sort(() => 0.5 - Math.random())
+            .slice(0, numShowtimes);
+
+          for (const time of selectedTimes) {
+            // Skip past showtimes for today
+            if (dayOffset === 0) {
+              const now = new Date();
+              const showtimeDateTime = new Date(
+                `${currentDate.toISOString().split('T')[0]} ${time}`,
+              );
+              if (showtimeDateTime < now) {
+                continue;
+              }
+            }
+
+            showtimeList.push({
+              id: crypto.randomUUID(),
+              movieId: movie.id,
+              cinemaId: cinema.id!,
+              showDate: currentDate,
+              showTime: time,
+              price: String(90000 + Math.floor(Math.random() * 50000)), // 90k-140k VND
+              totalSeats: 50, // Will be updated later
+              bookedSeats: Math.floor(Math.random() * 15), // Random 0-14 booked seats
+              isActive: true,
+            });
+          }
+        }
+      }
+    }
+
+    if (showtimeList.length > 0) {
+      await db.insert(showtimes).values(showtimeList);
+
+      // Cập nhật totalSeats từ seats table
+      console.log('✅ Updating total seats for showtimes...');
+      for (const showtime of showtimeList) {
+        const [seatCount] = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(seats)
+          .where(
+            and(
+              eq(seats.cinemaId, showtime.cinemaId),
+              eq(seats.isActive, true),
+            ),
+          );
+
+        await db
+          .update(showtimes)
+          .set({ totalSeats: Number(seatCount.count) })
+          .where(eq(showtimes.id, showtime.id!));
+      }
+
+      console.log(`✅ Showtimes seeded successfully! (${showtimeList.length})`);
+    }
 
     process.exit(0);
   } catch (error) {
