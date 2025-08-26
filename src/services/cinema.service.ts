@@ -33,7 +33,7 @@ export async function list(
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, [{ total }]] = await Promise.all([
+  const [cinemaRows, [{ total }]] = await Promise.all([
     db
       .select({
         id: cinemas.id,
@@ -44,12 +44,6 @@ export async function list(
         email: cinemas.email,
         isActive: cinemas.isActive,
         createdAt: cinemas.createdAt,
-        // Count seats for each cinema
-        seatCount: sql<number>`(
-          SELECT COUNT(*) 
-          FROM ${seats} 
-          WHERE ${seats.cinemaId} = ${cinemas.id}
-        )`.as('seat_count'),
       })
       .from(cinemas)
       .where(whereClause)
@@ -58,7 +52,17 @@ export async function list(
     db.select({ total: count() }).from(cinemas).where(whereClause),
   ]);
 
-  return { items: rows, total: Number(total) };
+  const seatCounts = await Promise.all(
+    cinemaRows.map(async (cinema) => {
+      const [{ count }] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(seats)
+        .where(eq(seats.cinemaId, cinema.id));
+      return { ...cinema, seatCount: Number(count) };
+    }),
+  );
+
+  return { items: seatCounts, total: Number(total) };
 }
 
 export async function create(input: CreateCinemaInput) {
@@ -107,21 +111,22 @@ export async function getById(id: string) {
       email: cinemas.email,
       isActive: cinemas.isActive,
       createdAt: cinemas.createdAt,
+
       seatCount: sql<number>`(
-        SELECT COUNT(*) 
-        FROM ${seats} 
-        WHERE ${seats.cinemaId} = ${cinemas.id}
+        SELECT COUNT(*) FROM ${seats}
+        WHERE ${seats.cinemaId} = ${sql.placeholder('cinemaId')}
       )`.as('seat_count'),
+
       activeSeatCount: sql<number>`(
-        SELECT COUNT(*) 
-        FROM ${seats} 
-        WHERE ${seats.cinemaId} = ${cinemas.id} 
+        SELECT COUNT(*) FROM ${seats}
+        WHERE ${seats.cinemaId} = ${sql.placeholder('cinemaId')}
         AND ${seats.isActive} = 1
       )`.as('active_seat_count'),
     })
     .from(cinemas)
     .where(eq(cinemas.id, id))
-    .limit(1);
+    .limit(1)
+    .execute({ cinemaId: id });
 
   if (!row) throw new NotFoundError('Cinema not found');
   return row;

@@ -1,14 +1,20 @@
-import { and, eq, like, sql, type SQL } from 'drizzle-orm';
+import { randomUUID } from 'crypto';
+import { and, eq, like, sql, count } from 'drizzle-orm';
 import { db } from '../db';
-import { seats } from '../db/schema.js';
-import crypto from 'crypto';
+import { seats, cinemas } from '../db/schema';
+import { NotFoundError, ConflictError } from '../utils/errors/base';
 
 export type SeatRow = typeof seats.$inferSelect;
 
-export type NewSeat = Omit<
-  typeof seats.$inferInsert,
-  'id' | 'createdAt' | 'updatedAt'
->;
+export type NewSeat = {
+  cinemaId: string;
+  seatNumber: string;
+  row: string;
+  column: number;
+  type?: 'regular' | 'vip' | 'couple' | 'disabled';
+  price: string;
+  isActive?: boolean;
+};
 
 export type SeatFilters = {
   cinemaId?: string;
@@ -17,70 +23,177 @@ export type SeatFilters = {
   isActive?: boolean;
 };
 
-function buildWhere(filters?: SeatFilters): SQL<unknown> | undefined {
-  if (!filters) return undefined;
-  const conds: SQL<unknown>[] = [];
-
-  if (filters.cinemaId) conds.push(eq(seats.cinemaId, filters.cinemaId));
-  if (filters.type) conds.push(eq(seats.type, filters.type));
-  if (filters.row) conds.push(like(seats.row, `%${filters.row}%`));
-  if (typeof filters.isActive === 'boolean')
-    conds.push(eq(seats.isActive, filters.isActive));
-
-  return conds.length ? and(...conds) : undefined;
-}
-
 export async function list(
-  page: number,
-  pageSize: number,
+  page = 1,
+  pageSize = 10,
   filters?: SeatFilters,
 ): Promise<{ items: SeatRow[]; total: number }> {
-  const where = buildWhere(filters);
+  const conditions = [];
 
-  const totalQ = db.select({ total: sql<number>`COUNT(*)` }).from(seats);
-  const [{ total }] = where ? await totalQ.where(where) : await totalQ;
+  if (filters?.cinemaId) {
+    conditions.push(eq(seats.cinemaId, filters.cinemaId));
+  }
+  if (filters?.type) {
+    conditions.push(eq(seats.type, filters.type));
+  }
+  if (filters?.row) {
+    conditions.push(like(seats.row, `%${filters.row}%`));
+  }
+  if (typeof filters?.isActive === 'boolean') {
+    conditions.push(eq(seats.isActive, filters.isActive));
+  }
 
-  const dataQ = db
-    .select()
-    .from(seats)
-    .limit(pageSize)
-    .offset((page - 1) * pageSize);
-  const items = where ? await dataQ.where(where) : await dataQ;
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  return { items, total };
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select()
+      .from(seats)
+      .where(whereClause)
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ total: count() }).from(seats).where(whereClause),
+  ]);
+
+  return { items: rows, total: Number(total) };
 }
 
 export async function createOne(input: NewSeat) {
-  const id = crypto.randomUUID(); // ✅ tự sinh id để trả về
-  const values: typeof seats.$inferInsert = {
+  // Validate cinema exists
+  const [cinema] = await db
+    .select()
+    .from(cinemas)
+    .where(eq(cinemas.id, input.cinemaId))
+    .limit(1);
+
+  if (!cinema) {
+    throw new NotFoundError('Cinema not found');
+  }
+
+  // Check for duplicate seat in the same cinema
+  const [existingSeat] = await db
+    .select()
+    .from(seats)
+    .where(
+      and(
+        eq(seats.cinemaId, input.cinemaId),
+        eq(seats.seatNumber, input.seatNumber),
+      ),
+    )
+    .limit(1);
+
+  if (existingSeat) {
+    throw new ConflictError('Seat number already exists in this cinema');
+  }
+
+  // Check for duplicate position (row + column) in the same cinema
+  const [existingPosition] = await db
+    .select()
+    .from(seats)
+    .where(
+      and(
+        eq(seats.cinemaId, input.cinemaId),
+        eq(seats.row, input.row),
+        eq(seats.column, input.column),
+      ),
+    )
+    .limit(1);
+
+  if (existingPosition) {
+    throw new ConflictError(
+      'Seat position (row + column) already exists in this cinema',
+    );
+  }
+
+  const id = randomUUID();
+  const insertData = {
     id,
     cinemaId: input.cinemaId,
     seatNumber: input.seatNumber,
     row: input.row,
     column: input.column,
     type: input.type ?? 'regular',
-    price: String(input.price), // ✅ schema hiện price là string
-    isActive: typeof input.isActive === 'boolean' ? input.isActive : true,
+    price: input.price,
+    isActive: input.isActive ?? true,
   };
 
-  await db.insert(seats).values(values);
-  // Có thể select lại nếu cần chắc chắn
+  await db.insert(seats).values(insertData);
+
   const [row] = await db.select().from(seats).where(eq(seats.id, id)).limit(1);
-  return row ?? { id, ...values };
+
+  if (!row) throw new Error('Failed to create seat');
+  return row;
 }
 
 export async function bulkCreate(inputs: NewSeat[]) {
   if (inputs.length === 0) return { inserted: 0 };
 
-  const values = inputs.map<typeof seats.$inferInsert>((s) => ({
-    id: crypto.randomUUID(),
+  // Validate all cinemas exist
+  const cinemaIds = [...new Set(inputs.map((s) => s.cinemaId))];
+  for (const cinemaId of cinemaIds) {
+    const [cinema] = await db
+      .select()
+      .from(cinemas)
+      .where(eq(cinemas.id, cinemaId))
+      .limit(1);
+
+    if (!cinema) {
+      throw new NotFoundError(`Cinema with ID ${cinemaId} not found`);
+    }
+  }
+
+  // Check for duplicates within the input array
+  const seatKeys = new Set();
+  const positionKeys = new Set();
+
+  for (const input of inputs) {
+    const seatKey = `${input.cinemaId}-${input.seatNumber}`;
+    const positionKey = `${input.cinemaId}-${input.row}-${input.column}`;
+
+    if (seatKeys.has(seatKey)) {
+      throw new ConflictError(
+        `Duplicate seat number ${input.seatNumber} in cinema ${input.cinemaId}`,
+      );
+    }
+    if (positionKeys.has(positionKey)) {
+      throw new ConflictError(
+        `Duplicate position ${input.row}-${input.column} in cinema ${input.cinemaId}`,
+      );
+    }
+
+    seatKeys.add(seatKey);
+    positionKeys.add(positionKey);
+  }
+
+  // Check for existing seats in database
+  for (const input of inputs) {
+    const [existingSeat] = await db
+      .select()
+      .from(seats)
+      .where(
+        and(
+          eq(seats.cinemaId, input.cinemaId),
+          eq(seats.seatNumber, input.seatNumber),
+        ),
+      )
+      .limit(1);
+
+    if (existingSeat) {
+      throw new ConflictError(
+        `Seat ${input.seatNumber} already exists in cinema ${input.cinemaId}`,
+      );
+    }
+  }
+
+  const values = inputs.map((s) => ({
+    id: randomUUID(),
     cinemaId: s.cinemaId,
     seatNumber: s.seatNumber,
     row: s.row,
     column: s.column,
-    type: s.type ?? 'regular',
-    price: String(s.price),
-    isActive: typeof s.isActive === 'boolean' ? s.isActive : true,
+    type: s.type ?? ('regular' as const),
+    price: s.price,
+    isActive: s.isActive ?? true,
   }));
 
   await db.insert(seats).values(values);
@@ -89,7 +202,9 @@ export async function bulkCreate(inputs: NewSeat[]) {
 
 export async function getById(id: string) {
   const [row] = await db.select().from(seats).where(eq(seats.id, id)).limit(1);
-  return row ?? null;
+
+  if (!row) throw new NotFoundError('Seat not found');
+  return row;
 }
 
 export async function updateById(
@@ -99,19 +214,83 @@ export async function updateById(
     row: string;
     column: number;
     type: 'regular' | 'vip' | 'couple' | 'disabled';
-    price: string; // ✅ giữ string
+    price: string;
     isActive: boolean;
   }>,
 ) {
-  const res = await db.update(seats).set(patch).where(eq(seats.id, id));
-  const updated =
-    (res as unknown as { rowsAffected?: number }).rowsAffected ?? 0;
-  return { updated };
+  const [existingSeat] = await db
+    .select()
+    .from(seats)
+    .where(eq(seats.id, id))
+    .limit(1);
+
+  if (!existingSeat) throw new NotFoundError('Seat not found');
+
+  // Check for conflicts if updating seat number, row, or column
+  if (patch.seatNumber && patch.seatNumber !== existingSeat.seatNumber) {
+    const [conflictSeat] = await db
+      .select()
+      .from(seats)
+      .where(
+        and(
+          eq(seats.cinemaId, existingSeat.cinemaId),
+          eq(seats.seatNumber, patch.seatNumber),
+          sql`${seats.id} != ${id}`,
+        ),
+      )
+      .limit(1);
+
+    if (conflictSeat) {
+      throw new ConflictError('Seat number already exists in this cinema');
+    }
+  }
+
+  if (
+    (patch.row && patch.row !== existingSeat.row) ||
+    (patch.column && patch.column !== existingSeat.column)
+  ) {
+    const checkRow = patch.row ?? existingSeat.row;
+    const checkColumn = patch.column ?? existingSeat.column;
+
+    const [conflictPosition] = await db
+      .select()
+      .from(seats)
+      .where(
+        and(
+          eq(seats.cinemaId, existingSeat.cinemaId),
+          eq(seats.row, checkRow),
+          eq(seats.column, checkColumn),
+          sql`${seats.id} != ${id}`,
+        ),
+      )
+      .limit(1);
+
+    if (conflictPosition) {
+      throw new ConflictError('Seat position already exists in this cinema');
+    }
+  }
+
+  await db.update(seats).set(patch).where(eq(seats.id, id));
+
+  const [updatedRow] = await db
+    .select()
+    .from(seats)
+    .where(eq(seats.id, id))
+    .limit(1);
+
+  if (!updatedRow) throw new Error('Failed to update seat');
+  return updatedRow;
 }
 
 export async function removeById(id: string) {
-  const res = await db.delete(seats).where(eq(seats.id, id));
-  const deleted =
-    (res as unknown as { rowsAffected?: number }).rowsAffected ?? 0;
-  return { deleted };
+  const [existingSeat] = await db
+    .select()
+    .from(seats)
+    .where(eq(seats.id, id))
+    .limit(1);
+
+  if (!existingSeat) throw new NotFoundError('Seat not found');
+
+  await db.delete(seats).where(eq(seats.id, id));
+  return true;
 }

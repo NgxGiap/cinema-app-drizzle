@@ -52,25 +52,52 @@ export const validateCinemaCreation = [
   body('name').notEmpty().withMessage('Cinema name is required'),
   body('address').notEmpty().withMessage('Address is required'),
   body('city').notEmpty().withMessage('City is required'),
-  body('phone')
-    .optional()
-    .isMobilePhone('any')
-    .withMessage('Invalid phone number'),
+  body('phone').optional().isString().withMessage('Phone must be a string'),
   body('email').optional().isEmail().withMessage('Invalid email format'),
+  body('isActive')
+    .optional()
+    .isBoolean()
+    .withMessage('isActive must be a boolean'),
   handleValidationErrors,
 ];
 
 export const validateSeatCreation = [
-  body('cinemaId').isUUID().withMessage('Valid cinema ID required'),
-  body('seatNumber').notEmpty().withMessage('Seat number is required'),
-  body('row').notEmpty().withMessage('Row is required'),
+  body('cinemaId')
+    .notEmpty()
+    .withMessage('Cinema ID is required')
+    .isUUID()
+    .withMessage('Valid cinema ID required'),
+  body('seatNumber')
+    .notEmpty()
+    .withMessage('Seat number is required')
+    .isLength({ min: 1, max: 10 })
+    .withMessage('Seat number must be 1-10 characters'),
+  body('row')
+    .notEmpty()
+    .withMessage('Row is required')
+    .isLength({ min: 1, max: 5 })
+    .withMessage('Row must be 1-5 characters'),
   body('column')
     .isInt({ min: 1 })
     .withMessage('Column must be a positive integer'),
   body('type')
+    .optional()
     .isIn(['regular', 'vip', 'couple', 'disabled'])
     .withMessage('Invalid seat type'),
-  body('price').isNumeric().withMessage('Price must be a number'),
+  body('price')
+    .isNumeric()
+    .withMessage('Price must be a number')
+    .custom((value) => {
+      const num = Number(value);
+      if (num <= 0) {
+        throw new Error('Price must be greater than 0');
+      }
+      return true;
+    }),
+  body('isActive')
+    .optional()
+    .isBoolean()
+    .withMessage('isActive must be a boolean'),
   handleValidationErrors,
 ];
 
