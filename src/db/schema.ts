@@ -61,9 +61,25 @@ export const seats = mysqlTable('seats', {
   createdAt: datetime('created_at').notNull().default(new Date()),
 });
 
+export const showtimes = mysqlTable('showtimes', {
+  id: varchar('id', { length: 36 })
+    .primaryKey()
+    .default(sql`(uuid())`),
+  movieId: varchar('movie_id', { length: 36 }).notNull(),
+  cinemaId: varchar('cinema_id', { length: 36 }).notNull(),
+  showDate: datetime('show_date').notNull(),
+  showTime: varchar('show_time', { length: 8 }).notNull(), // HH:MM:SS
+  price: decimal('price', { precision: 10, scale: 2 }).notNull(),
+  totalSeats: int('total_seats').notNull().default(0),
+  bookedSeats: int('booked_seats').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: datetime('created_at').notNull().default(new Date()),
+});
+
 // Relations
 export const cinemasRelations = relations(cinemas, ({ many }) => ({
   seats: many(seats),
+  showtimes: many(showtimes),
 }));
 
 export const seatsRelations = relations(seats, ({ one }) => ({
@@ -71,6 +87,21 @@ export const seatsRelations = relations(seats, ({ one }) => ({
     fields: [seats.cinemaId],
     references: [cinemas.id],
   }),
+}));
+
+export const showtimesRelations = relations(showtimes, ({ one }) => ({
+  movie: one(movies, {
+    fields: [showtimes.movieId],
+    references: [movies.id],
+  }),
+  cinema: one(cinemas, {
+    fields: [showtimes.cinemaId],
+    references: [cinemas.id],
+  }),
+}));
+
+export const moviesRelations = relations(movies, ({ many }) => ({
+  showtimes: many(showtimes),
 }));
 
 // Types
@@ -85,3 +116,6 @@ export type NewCinema = typeof cinemas.$inferInsert;
 
 export type Seat = typeof seats.$inferSelect;
 export type NewSeat = typeof seats.$inferInsert;
+
+export type Showtime = typeof showtimes.$inferSelect;
+export type NewShowtime = typeof showtimes.$inferInsert;
