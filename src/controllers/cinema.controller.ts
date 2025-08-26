@@ -7,25 +7,33 @@ type CinemaFilters = {
   isActive?: boolean;
 };
 
-export async function listCinemas(req: Request, res: Response) {
-  const page = Number(req.query.page ?? 1);
-  const pageSize = Number(req.query.pageSize ?? 20);
+export async function listCinemas(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const page = Number(req.query.page ?? 1);
+    const pageSize = Number(req.query.pageSize ?? 20);
 
-  const filters: CinemaFilters = {};
-  if (typeof req.query.city === 'string' && req.query.city.trim()) {
-    filters.city = req.query.city.trim();
+    const filters: CinemaFilters = {};
+    if (typeof req.query.city === 'string' && req.query.city.trim()) {
+      filters.city = req.query.city.trim();
+    }
+    if (typeof req.query.isActive === 'string') {
+      filters.isActive = req.query.isActive === 'true';
+    }
+
+    const where = Object.keys(filters).length ? filters : undefined;
+    const { items, total } = await svc.list(page, pageSize, where);
+
+    return res.ok(
+      { items, pagination: makePagination(page, pageSize, total) },
+      'Cinemas fetched',
+    );
+  } catch (error) {
+    next(error);
   }
-  if (typeof req.query.isActive === 'string') {
-    filters.isActive = req.query.isActive === 'true';
-  }
-
-  const where = Object.keys(filters).length ? filters : undefined;
-  const { items, total } = await svc.list(page, pageSize, where);
-
-  return res.ok(
-    { items, pagination: makePagination(page, pageSize, total) },
-    'Cinemas fetched',
-  );
 }
 
 export async function createCinema(
