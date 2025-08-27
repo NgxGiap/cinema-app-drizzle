@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '../db';
 import { movies } from '../db/schema';
-import { eq, count } from 'drizzle-orm';
+import { eq, count, and, like, gte, lte, sql } from 'drizzle-orm';
 import { NotFoundError } from '../utils/errors/base';
 
 type CreateMovieInput = {
@@ -11,16 +11,67 @@ type CreateMovieInput = {
   description?: string;
 };
 
-export async function list(page = 1, pageSize = 10) {
-  const [rows, [{ total }]] = await Promise.all([
+type MovieFilters = {
+  title?: string;
+  releaseYear?: number;
+  durationMin?: number;
+  durationMax?: number;
+  releaseDateFrom?: Date;
+  releaseDateTo?: Date;
+};
+
+export async function list(page = 1, pageSize = 10, filters?: MovieFilters) {
+  const conditions = [];
+
+  if (filters?.title) {
+    conditions.push(like(movies.title, `%${filters.title}%`));
+  }
+
+  if (filters?.releaseYear) {
+    // Filter by release year using SQL YEAR() function
+    conditions.push(sql`YEAR(${movies.releaseDate}) = ${filters.releaseYear}`);
+  }
+
+  if (filters?.durationMin) {
+    conditions.push(gte(movies.duration, filters.durationMin));
+  }
+
+  if (filters?.durationMax) {
+    conditions.push(lte(movies.duration, filters.durationMax));
+  }
+
+  if (filters?.releaseDateFrom) {
+    conditions.push(gte(movies.releaseDate, filters.releaseDateFrom));
+  }
+
+  if (filters?.releaseDateTo) {
+    // Set time to end of day for 'to' date
+    const toDate = new Date(filters.releaseDateTo);
+    toDate.setHours(23, 59, 59, 999);
+    conditions.push(lte(movies.releaseDate, toDate));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [movieRows, [{ total }]] = await Promise.all([
     db
-      .select()
+      .select({
+        id: movies.id,
+        title: movies.title,
+        description: movies.description,
+        duration: movies.duration,
+        releaseDate: movies.releaseDate,
+        createdAt: movies.createdAt,
+      })
       .from(movies)
+      .where(whereClause)
+      .orderBy(movies.createdAt)
       .limit(pageSize)
       .offset((page - 1) * pageSize),
-    db.select({ total: count() }).from(movies),
+    db.select({ total: count() }).from(movies).where(whereClause),
   ]);
-  return { items: rows, total: Number(total) };
+
+  return { items: movieRows, total: Number(total) };
 }
 
 export async function create(input: CreateMovieInput) {

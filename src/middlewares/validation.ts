@@ -32,6 +32,61 @@ export const validateRegister = [
   handleValidationErrors,
 ];
 
+export const validateMovieQuery = [
+  query('page')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Page must be a positive integer'),
+  query('pageSize')
+    .optional()
+    .isInt({ min: 1, max: 100 })
+    .withMessage('Page size must be between 1 and 100'),
+  query('title')
+    .optional()
+    .isLength({ min: 1, max: 255 })
+    .withMessage('Title must be between 1-255 characters')
+    .trim(),
+  query('releaseYear')
+    .optional()
+    .isInt({ min: 1900, max: new Date().getFullYear() + 5 })
+    .withMessage(
+      `Release year must be between 1900 and ${new Date().getFullYear() + 5}`,
+    ),
+  query('durationMin')
+    .optional()
+    .isInt({ min: 1, max: 1000 })
+    .withMessage('Minimum duration must be between 1-1000 minutes'),
+  query('durationMax')
+    .optional()
+    .isInt({ min: 1, max: 1000 })
+    .withMessage('Maximum duration must be between 1-1000 minutes')
+    .custom((value, { req }) => {
+      const min = req.query?.durationMin;
+      if (min && Number(value) < Number(min)) {
+        throw new Error(
+          'Maximum duration must be greater than minimum duration',
+        );
+      }
+      return true;
+    }),
+  query('releaseDateFrom')
+    .optional()
+    .isISO8601()
+    .withMessage('Release date from must be a valid date (YYYY-MM-DD)'),
+  query('releaseDateTo')
+    .optional()
+    .isISO8601()
+    .withMessage('Release date to must be a valid date (YYYY-MM-DD)')
+    .custom((value, { req }) => {
+      const fromDate = req.query?.releaseDateFrom;
+      if (fromDate && new Date(String(value)) < new Date(String(fromDate))) {
+        throw new Error('Release date to must be after release date from');
+      }
+      return true;
+    }),
+  handleValidationErrors,
+];
+
 // Validation rules for different entities
 export const validateMovieCreation = [
   body('title').notEmpty().withMessage('Title is required'),
