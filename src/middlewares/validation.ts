@@ -186,3 +186,116 @@ export const validateShowtimeUpdate = [
     }),
   handleValidationErrors,
 ];
+
+export const validateBookingCreation = [
+  body('showtimeId')
+    .notEmpty()
+    .withMessage('Showtime ID is required')
+    .isUUID()
+    .withMessage('Valid showtime ID required'),
+  body('seatIds')
+    .isArray({ min: 1, max: 8 })
+    .withMessage('seatIds must be an array with 1-8 seats')
+    .custom((seatIds) => {
+      // Check if all elements are valid UUIDs
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!seatIds.every((id: string) => uuidRegex.test(id))) {
+        throw new Error('All seat IDs must be valid UUIDs');
+      }
+      // Check for duplicates
+      if (new Set(seatIds).size !== seatIds.length) {
+        throw new Error('Duplicate seat IDs are not allowed');
+      }
+      return true;
+    }),
+  body('customerName')
+    .notEmpty()
+    .withMessage('Customer name is required')
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Customer name must be between 2-100 characters'),
+  body('customerEmail')
+    .notEmpty()
+    .withMessage('Customer email is required')
+    .isEmail()
+    .withMessage('Valid email address required'),
+  body('customerPhone')
+    .optional()
+    .matches(/^[\+]?[0-9\s\-\(\)]{10,20}$/)
+    .withMessage('Invalid phone number format'),
+  body('notes')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Notes must not exceed 500 characters'),
+  handleValidationErrors,
+];
+
+export const validatePaymentUpdate = [
+  body('paymentStatus')
+    .isIn(['pending', 'paid', 'failed', 'refunded'])
+    .withMessage('Invalid payment status'),
+  body('transactionId')
+    .optional()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Transaction ID must be 1-100 characters'),
+  handleValidationErrors,
+];
+
+export const validateBookingQuery = [
+  query('status')
+    .optional()
+    .isIn(['pending', 'confirmed', 'cancelled', 'expired'])
+    .withMessage('Invalid booking status'),
+  query('paymentStatus')
+    .optional()
+    .isIn(['pending', 'paid', 'failed', 'refunded'])
+    .withMessage('Invalid payment status'),
+  query('userId').optional().isUUID().withMessage('Invalid user ID format'),
+  query('showtimeId')
+    .optional()
+    .isUUID()
+    .withMessage('Invalid showtime ID format'),
+  query('movieId').optional().isUUID().withMessage('Invalid movie ID format'),
+  query('cinemaId').optional().isUUID().withMessage('Invalid cinema ID format'),
+  query('fromDate')
+    .optional()
+    .isISO8601()
+    .withMessage('Invalid fromDate format (use YYYY-MM-DD)'),
+  query('toDate')
+    .optional()
+    .isISO8601()
+    .withMessage('Invalid toDate format (use YYYY-MM-DD)'),
+  query('bookingNumber')
+    .optional()
+    .matches(/^BK\d{8}\d{6}[A-Z0-9]{4}$/)
+    .withMessage('Invalid booking number format'),
+  handleValidationErrors,
+];
+
+export const validateConfirmBooking = [
+  body('paymentMethod')
+    .optional()
+    .isIn(['cash', 'card', 'online', 'bank_transfer', 'wallet'])
+    .withMessage('Invalid payment method'),
+  handleValidationErrors,
+];
+
+export const validateCancelBooking = [
+  body('reason')
+    .optional()
+    .isLength({ max: 200 })
+    .withMessage('Cancellation reason must not exceed 200 characters'),
+  handleValidationErrors,
+];
+
+export const validateStatsQuery = [
+  query('fromDate')
+    .optional()
+    .isISO8601()
+    .withMessage('Invalid fromDate format (use YYYY-MM-DD)'),
+  query('toDate')
+    .optional()
+    .isISO8601()
+    .withMessage('Invalid toDate format (use YYYY-MM-DD)'),
+  handleValidationErrors,
+];

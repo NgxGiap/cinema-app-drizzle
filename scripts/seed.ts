@@ -1,9 +1,18 @@
 import 'dotenv/config';
 import { db } from '../src/db';
-import { users, movies, seats, cinemas, showtimes } from '../src/db/schema';
+import {
+  users,
+  movies,
+  seats,
+  cinemas,
+  showtimes,
+  bookings,
+  bookingSeats,
+  payments,
+} from '../src/db/schema';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql, inArray } from 'drizzle-orm';
 
 async function seed() {
   try {
@@ -11,6 +20,8 @@ async function seed() {
     // await db.delete(movies);
     // await db.delete(seats);
     // await db.delete(cinemas);
+    // await db.delete(showtimes);
+    // await db.delete(bookings);
 
     // Seed Users
     const hashedAdmin = await bcrypt.hash('123456', 10);
@@ -180,6 +191,202 @@ async function seed() {
 
       console.log(`✅ Showtimes seeded successfully! (${showtimeList.length})`);
     }
+
+    async function seedBookings() {
+      console.log('⏳ Seeding bookings...');
+
+      // Lấy 2 user để làm người đặt mẫu
+      const userList = await db
+        .select({ id: users.id, email: users.email, name: users.name })
+        .from(users)
+        .limit(2);
+
+      if (userList.length === 0) {
+        console.log('⚠️  No users to create bookings for. Skipped.');
+        return;
+      }
+      const userA = userList[0];
+      const userB = userList[userList.length > 1 ? 1 : 0];
+
+      // Chọn một số showtime tương lai & đang active
+      const futureShowtimes = await db
+        .select({
+          id: showtimes.id,
+          cinemaId: showtimes.cinemaId,
+          showDate: showtimes.showDate,
+          showTime: showtimes.showTime,
+          price: showtimes.price,
+          isActive: showtimes.isActive,
+          bookedSeats: showtimes.bookedSeats,
+          totalSeats: showtimes.totalSeats,
+        })
+        .from(showtimes)
+        .where(
+          and(
+            eq(showtimes.isActive, true),
+            sql`TIMESTAMP(${showtimes.showDate}, ${showtimes.showTime}) > NOW()`,
+          ),
+        )
+        .limit(6);
+
+      if (futureShowtimes.length === 0) {
+        console.log('⚠️  No future showtimes found. Skipped.');
+        return;
+      }
+
+      const genBookingNumber = () =>
+        'BK' +
+        Date.now().toString().slice(-6) +
+        Math.random().toString(36).slice(2, 6).toUpperCase();
+
+      let created = 0;
+
+      for (const st of futureShowtimes) {
+        // Ghế đã bị giữ/đặt
+        const taken = await db
+          .select({ seatId: bookingSeats.seatId })
+          .from(bookingSeats)
+          .leftJoin(bookings, eq(bookingSeats.bookingId, bookings.id))
+          .where(
+            and(
+              eq(bookings.showtimeId, st.id!),
+              inArray(bookings.status, ['pending', 'confirmed']),
+              inArray(bookingSeats.status, ['reserved', 'booked']),
+            ),
+          );
+        const takenSet = new Set(taken.map((t) => t.seatId));
+
+        // Ghế còn trống của rạp
+        const seatPool = await db
+          .select({ id: seats.id, price: seats.price })
+          .from(seats)
+          .where(
+            and(eq(seats.cinemaId, st.cinemaId!), eq(seats.isActive, true)),
+          );
+        const freeSeats = seatPool.filter((s) => !takenSet.has(s.id));
+        if (freeSeats.length < 1) continue;
+
+        const remainingCapacity =
+          (st.totalSeats ?? freeSeats.length) - (st.bookedSeats ?? 0);
+        if (remainingCapacity <= 0) continue;
+
+        // --- Booking 1: confirmed + paid (2 ghế nếu đủ) ---
+        const pick1Count = Math.min(2, remainingCapacity, freeSeats.length);
+        if (pick1Count > 0) {
+          const pick1 = freeSeats.slice(0, pick1Count);
+          const total1 = pick1.reduce((sum, s) => sum + Number(s.price), 0);
+          const bookingNumber1 = genBookingNumber();
+
+          await db.transaction(async (tx) => {
+            const b1Id = crypto.randomUUID();
+
+            await tx.insert(bookings).values({
+              id: b1Id,
+              userId: userA.id!,
+              showtimeId: st.id!,
+              bookingNumber: bookingNumber1,
+              totalAmount: total1.toFixed(2),
+              totalSeats: pick1.length,
+              status: 'confirmed',
+              paymentStatus: 'paid',
+              paymentMethod: 'cash',
+              customerName: userA.name || 'Seed User A',
+              customerEmail: userA.email!,
+              customerPhone: null,
+              notes: 'seed: confirmed paid',
+              confirmedAt: new Date(),
+            });
+
+            await tx.insert(bookingSeats).values(
+              pick1.map((s) => ({
+                id: crypto.randomUUID(),
+                bookingId: b1Id,
+                showtimeId: st.id!, // BẮT BUỘC: schema yêu cầu
+                seatId: s.id!,
+                price: Number(s.price).toFixed(2),
+                status: 'booked' as const,
+              })),
+            );
+
+            await tx
+              .update(showtimes)
+              .set({
+                bookedSeats: sql`${showtimes.bookedSeats} + ${pick1.length}`,
+              })
+              .where(eq(showtimes.id, st.id!));
+
+            await tx.insert(payments).values({
+              id: crypto.randomUUID(),
+              bookingId: b1Id,
+              amount: total1.toFixed(2),
+              method: 'cash',
+              status: 'completed',
+              transactionId: null,
+              processedAt: new Date(),
+            });
+          });
+
+          created++;
+        }
+
+        // --- Booking 2: pending (1 ghế) ---
+        const freeAfter1 = freeSeats.slice(pick1Count);
+        const capacityAfter1 =
+          (st.totalSeats ?? 9999) - (st.bookedSeats ?? 0) - pick1Count;
+
+        if (freeAfter1.length >= 1 && capacityAfter1 > 0) {
+          const pick2 = freeAfter1.slice(0, 1);
+          const total2 = pick2.reduce((sum, s) => sum + Number(s.price), 0);
+          const bookingNumber2 = genBookingNumber();
+          const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+          await db.transaction(async (tx) => {
+            const b2Id = crypto.randomUUID();
+
+            await tx.insert(bookings).values({
+              id: b2Id,
+              userId: userB.id!,
+              showtimeId: st.id!,
+              bookingNumber: bookingNumber2,
+              totalAmount: total2.toFixed(2),
+              totalSeats: pick2.length,
+              status: 'pending',
+              paymentStatus: 'pending',
+              paymentMethod: null,
+              customerName: userB.name || 'Seed User B',
+              customerEmail: userB.email!,
+              customerPhone: null,
+              notes: 'seed: pending hold',
+              expiresAt,
+            });
+
+            await tx.insert(bookingSeats).values(
+              pick2.map((s) => ({
+                id: crypto.randomUUID(),
+                bookingId: b2Id,
+                showtimeId: st.id!, // BẮT BUỘC: schema yêu cầu
+                seatId: s.id!,
+                price: Number(s.price).toFixed(2),
+                status: 'reserved' as const,
+              })),
+            );
+
+            await tx
+              .update(showtimes)
+              .set({
+                bookedSeats: sql`${showtimes.bookedSeats} + ${pick2.length}`,
+              })
+              .where(eq(showtimes.id, st.id!));
+          });
+
+          created++;
+        }
+      }
+
+      console.log(`✅ Bookings seeded: ${created}`);
+    }
+
+    await seedBookings();
 
     process.exit(0);
   } catch (error) {
