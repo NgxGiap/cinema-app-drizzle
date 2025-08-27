@@ -8,6 +8,8 @@ import {
   decimal,
   boolean,
   mysqlEnum,
+  index,
+  uniqueIndex,
 } from 'drizzle-orm/mysql-core';
 
 export const users = mysqlTable('users', {
@@ -76,20 +78,106 @@ export const showtimes = mysqlTable('showtimes', {
   createdAt: datetime('created_at').notNull().default(new Date()),
 });
 
+export const bookings = mysqlTable('bookings', {
+  id: varchar('id', { length: 36 })
+    .primaryKey()
+    .default(sql`(uuid())`),
+  userId: varchar('user_id', { length: 36 }).notNull(),
+  showtimeId: varchar('showtime_id', { length: 36 }).notNull(),
+  bookingNumber: varchar('booking_number', { length: 20 }).notNull().unique(),
+  totalAmount: decimal('total_amount', { precision: 10, scale: 2 }).notNull(),
+  totalSeats: int('total_seats').notNull(),
+  status: mysqlEnum('status', ['pending', 'confirmed', 'cancelled', 'expired'])
+    .notNull()
+    .default('pending'),
+  paymentStatus: mysqlEnum('payment_status', [
+    'pending',
+    'paid',
+    'failed',
+    'refunded',
+  ])
+    .notNull()
+    .default('pending'),
+  paymentMethod: varchar('payment_method', { length: 50 }),
+  customerName: varchar('customer_name', { length: 100 }).notNull(),
+  customerEmail: varchar('customer_email', { length: 255 }).notNull(),
+  customerPhone: varchar('customer_phone', { length: 20 }),
+  notes: text('notes'),
+  expiresAt: datetime('expires_at'), // For temporary holds
+  confirmedAt: datetime('confirmed_at'),
+  cancelledAt: datetime('cancelled_at'),
+  createdAt: datetime('created_at').notNull().default(new Date()),
+  updatedAt: datetime('updated_at')
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+});
+
+export const bookingSeats = mysqlTable(
+  'booking_seats',
+  {
+    id: varchar('id', { length: 36 })
+      .primaryKey()
+      .default(sql`(uuid())`),
+    bookingId: varchar('booking_id', { length: 36 }).notNull(),
+    showtimeId: varchar('showtime_id', { length: 36 }).notNull(), // ⬅️ thêm
+    seatId: varchar('seat_id', { length: 36 }).notNull(),
+    price: decimal('price', { precision: 10, scale: 2 }).notNull(),
+    status: mysqlEnum('status', ['reserved', 'booked', 'cancelled'])
+      .notNull()
+      .default('reserved'),
+    createdAt: datetime('created_at').notNull().default(new Date()),
+  },
+  (t) => ({
+    uqSeatPerShowtime: uniqueIndex('uq_seat_per_showtime').on(
+      t.showtimeId,
+      t.seatId,
+    ), // ⬅️ unique
+    idxBooking: index('idx_bookingSeat_booking').on(t.bookingId),
+    idxSeat: index('idx_bookingSeat_seat').on(t.seatId),
+  }),
+);
+
+export const payments = mysqlTable('payments', {
+  id: varchar('id', { length: 36 })
+    .primaryKey()
+    .default(sql`(uuid())`),
+  bookingId: varchar('booking_id', { length: 36 }).notNull(),
+  amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
+  method: varchar('method', { length: 50 }).notNull(), // cash, card, online, etc.
+  status: mysqlEnum('status', [
+    'pending',
+    'processing',
+    'completed',
+    'failed',
+    'refunded',
+  ])
+    .notNull()
+    .default('pending'),
+  transactionId: varchar('transaction_id', { length: 100 }),
+  gatewayResponse: text('gateway_response'), // JSON response from payment gateway
+  processedAt: datetime('processed_at'),
+  failedReason: text('failed_reason'),
+  createdAt: datetime('created_at').notNull().default(new Date()),
+  updatedAt: datetime('updated_at')
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+});
+
 // Relations
 export const cinemasRelations = relations(cinemas, ({ many }) => ({
   seats: many(seats),
   showtimes: many(showtimes),
 }));
 
-export const seatsRelations = relations(seats, ({ one }) => ({
+export const seatsRelations = relations(seats, ({ one, many }) => ({
   cinema: one(cinemas, {
     fields: [seats.cinemaId],
     references: [cinemas.id],
   }),
+  bookingSeats: many(bookingSeats),
 }));
 
-export const showtimesRelations = relations(showtimes, ({ one }) => ({
+export const showtimesRelations = relations(showtimes, ({ one, many }) => ({
   movie: one(movies, {
     fields: [showtimes.movieId],
     references: [movies.id],
@@ -98,10 +186,46 @@ export const showtimesRelations = relations(showtimes, ({ one }) => ({
     fields: [showtimes.cinemaId],
     references: [cinemas.id],
   }),
+  bookings: many(bookings),
 }));
 
 export const moviesRelations = relations(movies, ({ many }) => ({
   showtimes: many(showtimes),
+}));
+
+export const bookingsRelations = relations(bookings, ({ one, many }) => ({
+  user: one(users, {
+    fields: [bookings.userId],
+    references: [users.id],
+  }),
+  showtime: one(showtimes, {
+    fields: [bookings.showtimeId],
+    references: [showtimes.id],
+  }),
+  bookingSeats: many(bookingSeats),
+  payments: many(payments),
+}));
+
+export const bookingSeatsRelations = relations(bookingSeats, ({ one }) => ({
+  booking: one(bookings, {
+    fields: [bookingSeats.bookingId],
+    references: [bookings.id],
+  }),
+  seat: one(seats, {
+    fields: [bookingSeats.seatId],
+    references: [seats.id],
+  }),
+}));
+
+export const paymentsRelations = relations(payments, ({ one }) => ({
+  booking: one(bookings, {
+    fields: [payments.bookingId],
+    references: [bookings.id],
+  }),
+}));
+
+export const usersRelations = relations(users, ({ many }) => ({
+  bookings: many(bookings),
 }));
 
 // Types
@@ -119,3 +243,12 @@ export type NewSeat = typeof seats.$inferInsert;
 
 export type Showtime = typeof showtimes.$inferSelect;
 export type NewShowtime = typeof showtimes.$inferInsert;
+
+export type Booking = typeof bookings.$inferSelect;
+export type NewBooking = typeof bookings.$inferInsert;
+
+export type BookingSeat = typeof bookingSeats.$inferSelect;
+export type NewBookingSeat = typeof bookingSeats.$inferInsert;
+
+export type Payment = typeof payments.$inferSelect;
+export type NewPayment = typeof payments.$inferInsert;

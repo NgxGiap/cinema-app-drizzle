@@ -64,6 +64,27 @@
       "when": 1756195260746,
       "tag": "0008_clear_scrambler",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1756229321691,
+      "tag": "0009_clean_iron_fist",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1756229448879,
+      "tag": "0010_conscious_wonder_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1756230371384,
+      "tag": "0011_icy_rocket_racer",
+      "breakpoints": true
     }
   ]
 }
