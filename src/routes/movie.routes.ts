@@ -5,7 +5,7 @@ import { authorize } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
 import {
   validateMovieCreation,
-  validatePagination,
+  validateMovieQuery,
 } from '../middlewares/validation';
 
 const r = Router();
@@ -14,7 +14,7 @@ const r = Router();
 r.get(
   '/',
   optionalAuth, // Optional auth for potential future personalization
-  validatePagination,
+  validateMovieQuery, // Use the new validation with filters
   c.listMovies,
 );
 

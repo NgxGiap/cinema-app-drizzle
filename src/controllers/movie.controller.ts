@@ -2,6 +2,15 @@ import { Request, Response, NextFunction } from 'express';
 import * as svc from '../services/movie.service';
 import { makePagination } from '../utils/http';
 
+type MovieFilters = {
+  title?: string;
+  releaseYear?: number;
+  durationMin?: number;
+  durationMax?: number;
+  releaseDateFrom?: Date;
+  releaseDateTo?: Date;
+};
+
 export async function listMovies(
   req: Request,
   res: Response,
@@ -10,9 +19,74 @@ export async function listMovies(
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Number(req.query.pageSize) || 10);
-    const { items, total } = await svc.list(page, pageSize);
+
+    const filters: MovieFilters = {};
+
+    // Filter by title (partial match)
+    if (typeof req.query.title === 'string' && req.query.title.trim()) {
+      filters.title = req.query.title.trim();
+    }
+
+    // Filter by release year
+    if (
+      typeof req.query.releaseYear === 'string' &&
+      req.query.releaseYear.trim()
+    ) {
+      const year = Number(req.query.releaseYear);
+      if (!isNaN(year) && year > 1900 && year <= new Date().getFullYear() + 5) {
+        filters.releaseYear = year;
+      }
+    }
+
+    // Filter by minimum duration
+    if (
+      typeof req.query.durationMin === 'string' &&
+      req.query.durationMin.trim()
+    ) {
+      const minDuration = Number(req.query.durationMin);
+      if (!isNaN(minDuration) && minDuration > 0) {
+        filters.durationMin = minDuration;
+      }
+    }
+
+    // Filter by maximum duration
+    if (
+      typeof req.query.durationMax === 'string' &&
+      req.query.durationMax.trim()
+    ) {
+      const maxDuration = Number(req.query.durationMax);
+      if (!isNaN(maxDuration) && maxDuration > 0) {
+        filters.durationMax = maxDuration;
+      }
+    }
+
+    // Filter by release date from
+    if (
+      typeof req.query.releaseDateFrom === 'string' &&
+      req.query.releaseDateFrom.trim()
+    ) {
+      const fromDate = new Date(req.query.releaseDateFrom);
+      if (!isNaN(fromDate.getTime())) {
+        filters.releaseDateFrom = fromDate;
+      }
+    }
+
+    // Filter by release date to
+    if (
+      typeof req.query.releaseDateTo === 'string' &&
+      req.query.releaseDateTo.trim()
+    ) {
+      const toDate = new Date(req.query.releaseDateTo);
+      if (!isNaN(toDate.getTime())) {
+        filters.releaseDateTo = toDate;
+      }
+    }
+
+    const where = Object.keys(filters).length ? filters : undefined;
+    const { items, total } = await svc.list(page, pageSize, where);
+
     return res.ok(
-      { items, total, pagination: makePagination(page, pageSize, total) },
+      { items, pagination: makePagination(page, pageSize, total) },
       'Movies fetched',
     );
   } catch (error) {
