@@ -4,48 +4,58 @@ import { requireAuth, optionalAuth } from '../middlewares/auth';
 import { authorize } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
 import {
+  validatePagination,
+  validateShowtimeListQuery,
   validateShowtimeCreation,
   validateShowtimeUpdate,
-  validatePagination,
+  validateIdParam,
+  handleValidationErrors,
 } from '../middlewares/validation';
 
 const r = Router();
 
-// Public routes for viewing showtimes
-r.get('/', optionalAuth, validatePagination, c.listShowtimes);
-
-r.get('/upcoming', optionalAuth, validatePagination, c.getUpcomingShowtimes);
-
+/** Public */
 r.get(
-  '/movie/:movieId',
+  '/',
   optionalAuth,
   validatePagination,
-  c.getShowtimesByMovie,
+  validateShowtimeListQuery,
+  handleValidationErrors,
+  c.listShowtimes,
 );
-
 r.get(
-  '/cinema/:cinemaId',
+  '/upcoming',
   optionalAuth,
-  validatePagination,
-  c.getShowtimesByCinema,
+  handleValidationErrors,
+  c.getUpcomingShowtimes,
 );
 
-r.get('/:id', optionalAuth, c.getShowtime);
-
-// Protected routes for showtime management - Admin/Manager only
+/** Admin */
 r.post(
   '/',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
   validateShowtimeCreation,
+  handleValidationErrors,
   c.createShowtime,
+);
+
+r.get(
+  '/:id',
+  requireAuth,
+  authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
+  validateIdParam,
+  handleValidationErrors,
+  c.getShowtime,
 );
 
 r.put(
   '/:id',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
+  validateIdParam,
   validateShowtimeUpdate,
+  handleValidationErrors,
   c.updateShowtime,
 );
 
@@ -53,6 +63,8 @@ r.patch(
   '/:id/toggle-status',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
+  validateIdParam,
+  handleValidationErrors,
   c.toggleShowtimeStatus,
 );
 
@@ -60,6 +72,8 @@ r.delete(
   '/:id',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
+  validateIdParam,
+  handleValidationErrors,
   c.deleteShowtime,
 );
 

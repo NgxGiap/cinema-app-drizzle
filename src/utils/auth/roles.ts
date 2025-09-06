@@ -27,6 +27,12 @@ export enum Permission {
   VIEW_BOOKINGS = 'VIEW_BOOKINGS',
   CREATE_BOOKING = 'CREATE_BOOKING',
 
+  // Paymant management
+  MANAGE_PAYMENTS = 'MANAGE_PAYMENTS',
+
+  // Seat management
+  MANAGE_ROOMS = 'MANAGE_ROOMS',
+
   // Reports
   VIEW_REPORTS = 'VIEW_REPORTS',
 }
@@ -45,6 +51,8 @@ export const RolePermissions: Record<Role, Permission[]> = {
     Permission.MANAGE_BOOKINGS,
     Permission.VIEW_BOOKINGS,
     Permission.CREATE_BOOKING,
+    Permission.MANAGE_PAYMENTS,
+    Permission.MANAGE_ROOMS,
     Permission.VIEW_REPORTS,
   ],
   [Role.MANAGER]: [

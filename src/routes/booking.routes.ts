@@ -4,61 +4,40 @@ import { requireAuth, optionalAuth } from '../middlewares/auth';
 import { authorize } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
 import {
-  validateBookingCreation,
-  validatePaymentUpdate,
-  validatePagination,
+  validateBookingHold,
+  validateIdParam,
+  handleValidationErrors,
 } from '../middlewares/validation';
 
 const r = Router();
 
-// Public routes
-r.get('/seat-availability/:showtimeId', optionalAuth, c.getSeatAvailability);
-
-// Protected routes - Authentication required
-r.post('/', requireAuth, validateBookingCreation, c.createBooking);
-
-r.get('/my-bookings', requireAuth, validatePagination, c.getUserBookings);
-
-r.get('/booking-number/:bookingNumber', requireAuth, c.getBookingByNumber);
-
-r.get('/:id', requireAuth, c.getBooking);
-
-r.patch('/:id/confirm', requireAuth, c.confirmBooking);
-
-r.patch('/:id/cancel', requireAuth, c.cancelBooking);
-
-// Admin/Manager/Staff routes
-r.get(
-  '/',
-  requireAuth,
-  authorize(Permission.VIEW_BOOKINGS, Permission.MANAGE_BOOKINGS),
-  validatePagination,
-  c.listBookings,
+/** Public (hoặc yêu cầu đăng nhập tuỳ bạn) */
+r.post(
+  '/hold',
+  optionalAuth,
+  validateBookingHold,
+  handleValidationErrors,
+  c.hold,
 );
+r.get('/:id', optionalAuth, validateIdParam, handleValidationErrors, c.getById);
 
-r.patch(
-  '/:id/payment',
+/** Admin/Dev helpers */
+r.post(
+  '/:id/cancel',
   requireAuth,
   authorize(Permission.MANAGE_BOOKINGS),
-  validatePaymentUpdate,
-  c.updatePaymentStatus,
+  validateIdParam,
+  handleValidationErrors,
+  c.cancel,
 );
 
 r.post(
-  '/expire-bookings',
+  '/:id/mark-paid',
   requireAuth,
   authorize(Permission.MANAGE_BOOKINGS),
-  c.expireBookings,
+  validateIdParam,
+  handleValidationErrors,
+  c.markPaid,
 );
-
-r.get(
-  '/admin/stats',
-  requireAuth,
-  authorize(Permission.VIEW_REPORTS),
-  c.getBookingStats,
-);
-
-// Webhook route (no auth required as it comes from payment gateway)
-r.post('/webhook/payment', c.paymentWebhook);
 
 export default r;
