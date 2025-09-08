@@ -1,17 +1,17 @@
 import { randomUUID } from 'crypto';
-import { and, asc, count, eq, inArray, like, SQL } from 'drizzle-orm';
+import { and, asc, count, eq, sql } from 'drizzle-orm';
 import { db } from '../db';
-import { rooms, seats } from '../db/schema';
+import { cinemas, rooms, seats } from '../db/schema';
 import { ConflictError, NotFoundError } from '../utils/errors/base';
 
 export type RoomListItem = {
   id: string;
-  cinemaId: string;
   name: string;
   capacity: number;
   isActive: boolean;
-  seatingMap: unknown | null;
+  cinema: { id: string; name: string } | null;
   seatsCount: number;
+  activeSeats: number;
 };
 
 export type RoomFilters = {
@@ -30,16 +30,6 @@ export type NewRoom = {
 
 export type UpdateRoom = Partial<NewRoom>;
 
-function whereFromFilters(filters?: RoomFilters): SQL<unknown> | undefined {
-  if (!filters) return undefined;
-  const clauses: SQL<unknown>[] = [];
-  if (filters.cinemaId) clauses.push(eq(rooms.cinemaId, filters.cinemaId));
-  if (typeof filters.isActive === 'boolean')
-    clauses.push(eq(rooms.isActive, filters.isActive));
-  if (filters.q) clauses.push(like(rooms.name, `%${filters.q}%`));
-  return clauses.length ? and(...clauses) : undefined;
-}
-
 async function assertUniqueNameInCinema(
   cinemaId: string,
   name: string,
@@ -56,55 +46,41 @@ async function assertUniqueNameInCinema(
 export async function list(
   page = 1,
   pageSize = 20,
-  filters?: RoomFilters,
+  filters?: { cinemaId?: string; isActive?: boolean; q?: string },
 ): Promise<{ items: RoomListItem[]; total: number }> {
-  const where = whereFromFilters(filters);
-  const offset = (page - 1) * pageSize;
+  const where = filters?.cinemaId
+    ? eq(rooms.cinemaId, filters.cinemaId)
+    : undefined;
 
-  const baseRows = await db
+  const rows = await db
     .select({
       id: rooms.id,
-      cinemaId: rooms.cinemaId,
       name: rooms.name,
       capacity: rooms.capacity,
       isActive: rooms.isActive,
-      seatingMap: rooms.seatingMap,
+      cinema: { id: cinemas.id, name: cinemas.name },
+      seatsCount: sql<number>`COUNT(${seats.id})`,
+      activeSeats: sql<number>`SUM(CASE WHEN ${seats.isActive} THEN 1 ELSE 0 END)`,
     })
     .from(rooms)
+    .leftJoin(cinemas, eq(cinemas.id, rooms.cinemaId))
+    .leftJoin(seats, eq(seats.roomId, rooms.id))
     .where(where)
+    .groupBy(rooms.id, cinemas.id)
     .orderBy(asc(rooms.name))
     .limit(pageSize)
-    .offset(offset);
+    .offset((page - 1) * pageSize);
 
   const [{ total }] = await db
     .select({ total: count() })
     .from(rooms)
     .where(where);
-
-  if (baseRows.length === 0) {
-    return { items: [], total: Number(total) };
-  }
-
-  const ids = baseRows.map((r) => r.id);
-  const seatCountsRows = await db
-    .select({ roomId: seats.roomId, cnt: count() })
-    .from(seats)
-    .where(inArray(seats.roomId, ids))
-    .groupBy(seats.roomId);
-
-  const seatCounts: Record<string, number> = {};
-  for (const r of seatCountsRows) seatCounts[r.roomId] = Number(r.cnt);
-
-  const items: RoomListItem[] = baseRows.map((r) => ({
-    id: r.id,
-    cinemaId: r.cinemaId,
-    name: r.name,
-    capacity: r.capacity ?? 0,
-    isActive: r.isActive,
-    seatingMap: r.seatingMap ?? null,
-    seatsCount: seatCounts[r.id] ?? 0,
+  const items: RoomListItem[] = rows.map((r) => ({
+    ...r,
+    capacity: Number(r.capacity ?? 0),
+    seatsCount: Number(r.seatsCount ?? 0),
+    activeSeats: Number(r.activeSeats ?? 0),
   }));
-
   return { items, total: Number(total) };
 }
 
@@ -112,31 +88,26 @@ export async function getById(id: string): Promise<RoomListItem> {
   const [r] = await db
     .select({
       id: rooms.id,
-      cinemaId: rooms.cinemaId,
       name: rooms.name,
       capacity: rooms.capacity,
       isActive: rooms.isActive,
-      seatingMap: rooms.seatingMap,
+      cinema: { id: cinemas.id, name: cinemas.name },
+      seatsCount: sql<number>`COUNT(${seats.id})`,
+      activeSeats: sql<number>`SUM(CASE WHEN ${seats.isActive} THEN 1 ELSE 0 END)`,
     })
     .from(rooms)
+    .leftJoin(cinemas, eq(cinemas.id, rooms.cinemaId))
+    .leftJoin(seats, eq(seats.roomId, rooms.id))
     .where(eq(rooms.id, id))
+    .groupBy(rooms.id, cinemas.id)
     .limit(1);
 
   if (!r) throw new NotFoundError('Room not found');
-
-  const [{ sc }] = await db
-    .select({ sc: count() })
-    .from(seats)
-    .where(eq(seats.roomId, id));
-
   return {
-    id: r.id,
-    cinemaId: r.cinemaId,
-    name: r.name,
-    capacity: r.capacity ?? 0,
-    isActive: r.isActive,
-    seatingMap: r.seatingMap ?? null,
-    seatsCount: Number(sc),
+    ...r,
+    capacity: Number(r.capacity ?? 0),
+    seatsCount: Number(r.seatsCount ?? 0),
+    activeSeats: Number(r.activeSeats ?? 0),
   };
 }
 

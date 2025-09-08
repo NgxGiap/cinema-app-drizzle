@@ -19,6 +19,7 @@ r.post(
   handleValidationErrors,
   c.hold,
 );
+
 r.get('/:id', optionalAuth, validateIdParam, handleValidationErrors, c.getById);
 
 /** Admin/Dev helpers */

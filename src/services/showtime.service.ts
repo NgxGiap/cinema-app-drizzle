@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { asc, and, count, eq, gte, lte, SQL } from 'drizzle-orm';
 import { db } from '../db';
-import { cinemas, movies, rooms, showtimes } from '../db/schema';
+import { cinemas, movies, rooms, seats, showtimes } from '../db/schema';
 import {
   ConflictError,
   NotFoundError,
@@ -33,19 +33,96 @@ export type ShowtimeFilters = {
   from?: Date;
   to?: Date;
   isActive?: boolean;
+  q?: string;
 };
 
 export type ShowtimeListItem = {
   id: string;
-  movieId: string;
-  cinemaId: string;
-  roomId: string;
   startsAt: Date;
-  price: string;
+  price: string; // luôn string (decimal)
   totalSeats: number;
   bookedSeats: number;
+  availableSeats: number;
   isActive: boolean;
+  movie: {
+    id: string;
+    slug: string;
+    title: string;
+    posterUrl: string | null;
+    state: (typeof movies.$inferSelect)['state'];
+    runtimeMinutes: number;
+    ratingCode: string | null;
+  };
+  cinema: {
+    id: string;
+    name: string;
+    city: string | null;
+    address: string | null;
+  };
+  room: {
+    id: string;
+    name: string;
+  };
 };
+
+function mapRow(r: {
+  id: string;
+  startsAt: Date;
+  price: string | number;
+  totalSeats: number | string | bigint;
+  bookedSeats: number | string | bigint;
+  isActive: boolean;
+
+  movie: {
+    id: string;
+    slug: string;
+    title: string;
+    posterUrl: string | null;
+    state: (typeof movies.$inferSelect)['state'];
+    runtimeMinutes: number;
+    ratingCode: string | null;
+  } | null;
+
+  cinema: {
+    id: string;
+    name: string;
+    city: string | null;
+    address: string | null;
+  } | null;
+
+  room: { id: string; name: string } | null;
+}): ShowtimeListItem {
+  const total = Number(r.totalSeats ?? 0);
+  const booked = Number(r.bookedSeats ?? 0);
+  return {
+    id: r.id,
+    startsAt: r.startsAt,
+    price: String(r.price),
+    totalSeats: total,
+    bookedSeats: booked,
+    availableSeats: Math.max(0, total - booked),
+    isActive: r.isActive,
+    movie: {
+      id: r.movie?.id ?? '',
+      slug: r.movie?.slug ?? '',
+      title: r.movie?.title ?? '',
+      posterUrl: r.movie?.posterUrl ?? null,
+      state: r.movie?.state ?? 'COMING_SOON',
+      runtimeMinutes: r.movie?.runtimeMinutes ?? 0,
+      ratingCode: r.movie?.ratingCode ?? null,
+    },
+    cinema: {
+      id: r.cinema?.id ?? '',
+      name: r.cinema?.name ?? '',
+      city: r.cinema?.city ?? null,
+      address: r.cinema?.address ?? null,
+    },
+    room: {
+      id: r.room?.id ?? '',
+      name: r.room?.name ?? '',
+    },
+  };
+}
 
 /* ---------------- helpers ---------------- */
 
@@ -109,44 +186,62 @@ function toWhere(filters?: ShowtimeFilters): SQL<unknown> | undefined {
 export async function create(
   input: CreateShowtimeInput,
 ): Promise<ShowtimeListItem> {
-  if (
-    !(input as { startsAt: Date }).startsAt ||
-    Number.isNaN(+input.startsAt)
-  ) {
+  // Chuẩn hoá & validate startsAt
+  const startsAt =
+    input.startsAt instanceof Date ? input.startsAt : new Date(input.startsAt);
+  if (Number.isNaN(+startsAt)) {
     throw new ValidationError('startsAt is invalid');
   }
+
   await ensureMovie(input.movieId);
   await ensureCinema(input.cinemaId);
 
   const roomId = input.roomId || (await ensureDefaultRoom(input.cinemaId));
 
-  // unique theo (room_id, starts_at)
-  const [dup] = await db
-    .select({ id: showtimes.id })
-    .from(showtimes)
-    .where(
-      and(eq(showtimes.roomId, roomId), eq(showtimes.startsAt, input.startsAt)),
-    )
-    .limit(1);
-  if (dup)
-    throw new ConflictError('Showtime already exists for this room & time');
+  // TRẢ VỀ id từ transaction, để đảm bảo đã commit trước khi gọi getById
+  const newId = await db.transaction(async (tx) => {
+    // unique (room_id, starts_at)
+    const [dup] = await tx
+      .select({ id: showtimes.id })
+      .from(showtimes)
+      .where(
+        and(eq(showtimes.roomId, roomId), eq(showtimes.startsAt, startsAt)),
+      )
+      .limit(1);
+    if (dup)
+      throw new ConflictError('Showtime already exists for this room & time');
 
-  const id = randomUUID();
-  await db.insert(showtimes).values({
-    id,
-    movieId: input.movieId,
-    cinemaId: input.cinemaId,
-    roomId,
-    startsAt: input.startsAt,
-    price: input.price,
-    totalSeats: 0,
-    bookedSeats: 0,
-    isActive: input.isActive ?? true,
+    // tổng ghế active của room
+    const [{ total }] = await tx
+      .select({ total: count() })
+      .from(seats)
+      .where(and(eq(seats.roomId, roomId), eq(seats.isActive, true)));
+    const totalSeats = Number(total);
+    if (totalSeats === 0) {
+      throw new ValidationError(
+        'Room has no active seats to schedule a showtime',
+      );
+    }
+
+    const id = randomUUID();
+    await tx.insert(showtimes).values({
+      id,
+      movieId: input.movieId,
+      cinemaId: input.cinemaId,
+      roomId,
+      startsAt,
+      price: input.price,
+      totalSeats,
+      bookedSeats: 0,
+      isActive: input.isActive ?? true,
+    });
+
+    return id;
   });
-
-  return getById(id);
+  return getById(newId);
 }
 
+// ====== REPLACE: list() ======
 export async function list(
   page = 1,
   pageSize = 20,
@@ -158,16 +253,36 @@ export async function list(
   const rows = await db
     .select({
       id: showtimes.id,
-      movieId: showtimes.movieId,
-      cinemaId: showtimes.cinemaId,
-      // roomId: showtimes.roomId,
-      // startsAt: showtimes.startsAt,
-      // price: showtimes.price,
-      // totalSeats: showtimes.totalSeats,
-      // bookedSeats: showtimes.bookedSeats,
+      startsAt: showtimes.startsAt,
+      price: showtimes.price,
+      totalSeats: showtimes.totalSeats,
+      bookedSeats: showtimes.bookedSeats,
       isActive: showtimes.isActive,
+
+      movie: {
+        id: movies.id,
+        slug: movies.slug,
+        title: movies.title,
+        posterUrl: movies.posterUrl,
+        state: movies.state,
+        runtimeMinutes: movies.runtimeMinutes,
+        ratingCode: movies.ratingCode,
+      },
+      cinema: {
+        id: cinemas.id,
+        name: cinemas.name,
+        city: cinemas.city,
+        address: cinemas.address,
+      },
+      room: {
+        id: rooms.id,
+        name: rooms.name,
+      },
     })
     .from(showtimes)
+    .leftJoin(movies, eq(movies.id, showtimes.movieId))
+    .leftJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
+    .leftJoin(rooms, eq(rooms.id, showtimes.roomId))
     .where(where)
     .orderBy(asc(showtimes.startsAt))
     .limit(pageSize)
@@ -178,29 +293,49 @@ export async function list(
     .from(showtimes)
     .where(where);
 
-  // cast gọn (Drizzle đã gợi ý đúng kiểu sẵn)
-  return { items: rows as ShowtimeListItem[], total: Number(total) };
+  return { items: rows.map(mapRow), total: Number(total) };
 }
 
+// ====== REPLACE (hoặc thêm mới): getById() trả nested ======
 export async function getById(id: string): Promise<ShowtimeListItem> {
   const [r] = await db
     .select({
       id: showtimes.id,
-      movieId: showtimes.movieId,
-      cinemaId: showtimes.cinemaId,
-      roomId: showtimes.roomId,
       startsAt: showtimes.startsAt,
       price: showtimes.price,
       totalSeats: showtimes.totalSeats,
       bookedSeats: showtimes.bookedSeats,
       isActive: showtimes.isActive,
+
+      movie: {
+        id: movies.id,
+        slug: movies.slug,
+        title: movies.title,
+        posterUrl: movies.posterUrl,
+        state: movies.state,
+        runtimeMinutes: movies.runtimeMinutes,
+        ratingCode: movies.ratingCode,
+      },
+      cinema: {
+        id: cinemas.id,
+        name: cinemas.name,
+        city: cinemas.city,
+        address: cinemas.address,
+      },
+      room: {
+        id: rooms.id,
+        name: rooms.name,
+      },
     })
     .from(showtimes)
+    .leftJoin(movies, eq(movies.id, showtimes.movieId))
+    .leftJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
+    .leftJoin(rooms, eq(rooms.id, showtimes.roomId))
     .where(eq(showtimes.id, id))
     .limit(1);
 
-  if (!r) throw new NotFoundError('Showtime not found');
-  return r as ShowtimeListItem;
+  if (!r) throw new NotFoundError('Showtime not found'); // nếu bạn đã có NotFoundError
+  return mapRow(r);
 }
 
 export async function update(

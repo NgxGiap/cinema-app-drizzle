@@ -215,7 +215,7 @@ export async function updateByWebhook(
 
   // 3) Side-effects theo status
   if (input.status === 'PAID') {
-    await bookingSvc.markPaidAndIssueTickets(paymentRow.bookingId);
+    await bookingSvc.finalizeBookingSeats(paymentRow.bookingId);
   } else if (input.status === 'FAILED') {
     // Optional: mark booking.paymentStatus FAILED
     await db

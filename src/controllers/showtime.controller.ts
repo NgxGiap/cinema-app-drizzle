@@ -24,37 +24,30 @@ export async function listShowtimes(
 ) {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
-    const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
+    const pageSize = Math.min(200, Number(req.query.pageSize) || 20);
 
     const filters: svc.ShowtimeFilters = {};
-    if (typeof req.query.cinemaId === 'string' && req.query.cinemaId)
-      filters.cinemaId = req.query.cinemaId;
-    if (typeof req.query.movieId === 'string' && req.query.movieId)
+
+    if (typeof req.query.movieId === 'string')
       filters.movieId = req.query.movieId;
-    if (typeof req.query.roomId === 'string' && req.query.roomId)
-      filters.roomId = req.query.roomId;
+    if (typeof req.query.cinemaId === 'string')
+      filters.cinemaId = req.query.cinemaId;
+    if (typeof req.query.roomId === 'string') filters.roomId = req.query.roomId;
+    if (typeof req.query.from === 'string')
+      filters.from = new Date(req.query.from);
+    if (typeof req.query.to === 'string') filters.to = new Date(req.query.to);
     if (typeof req.query.isActive === 'string')
       filters.isActive = req.query.isActive === 'true';
-    if (typeof req.query.from === 'string') {
-      const d = new Date(req.query.from);
-      if (!Number.isNaN(+d)) filters.from = d;
-    }
-    if (typeof req.query.to === 'string') {
-      const d = new Date(req.query.to);
-      if (!Number.isNaN(+d)) filters.to = d;
-    }
+    if (typeof req.query.q === 'string') filters.q = req.query.q.trim();
 
-    const { items, total } = await svc.list(
-      page,
-      pageSize,
-      Object.keys(filters).length ? filters : undefined,
-    );
-    return res.ok(
-      { items, total, pagination: makePagination(page, pageSize, total) },
-      'Showtimes fetched',
-    );
-  } catch (error) {
-    next(error);
+    const { items, total } = await svc.list(page, pageSize, filters);
+    return res.ok({
+      items,
+      total,
+      pagination: makePagination(page, pageSize, total),
+    });
+  } catch (e) {
+    next(e);
   }
 }
 
@@ -66,8 +59,8 @@ export async function getShowtime(
   try {
     const item = await svc.getById(req.params.id);
     return res.ok(item);
-  } catch (error) {
-    next(error);
+  } catch (e) {
+    next(e);
   }
 }
 

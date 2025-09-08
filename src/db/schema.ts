@@ -344,6 +344,40 @@ export const bookingSeats = mysqlTable(
   }),
 );
 
+/** BOOKING_SEAT_HOLDS — tạm giữ ghế trong thời gian ngắn */
+export const bookingSeatHolds = mysqlTable(
+  'booking_seat_holds',
+  {
+    id: varchar('id', { length: 36 })
+      .primaryKey()
+      .default(sql`(uuid())`),
+
+    bookingId: varchar('booking_id', { length: 36 })
+      .notNull()
+      .references(() => bookings.id, { onDelete: 'cascade' }),
+
+    showtimeId: varchar('showtime_id', { length: 36 })
+      .notNull()
+      .references(() => showtimes.id, { onDelete: 'cascade' }),
+
+    seatId: varchar('seat_id', { length: 36 })
+      .notNull()
+      .references(() => seats.id, { onDelete: 'restrict' }),
+
+    expiresAt: datetime('expires_at').notNull(),
+
+    createdAt: datetime('created_at')
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    // mỗi suất chiếu, 1 ghế chỉ có 1 hold sống tại một thời điểm
+    uqLive: uniqueIndex('uq_hold_live').on(t.showtimeId, t.seatId),
+    idxExpires: index('idx_hold_expires').on(t.expiresAt),
+    idxBooking: index('idx_hold_booking').on(t.bookingId),
+  }),
+);
+
 /** PAYMENTS — chi tiết thanh toán 1:n với bookings */
 export const payments = mysqlTable(
   'payments',

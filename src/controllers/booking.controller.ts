@@ -1,78 +1,71 @@
-import { Request, Response, NextFunction } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import * as svc from '../services/booking.service';
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null;
-}
-
-/** POST /bookings/hold */
-export async function hold(req: Request, res: Response, next: NextFunction) {
+export async function holdSeats(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
-    if (!isObject(req.body)) return res.fail('Invalid payload');
-    const seats = Array.isArray(req.body.seats) ? req.body.seats : [];
-    const normalized = seats.map((x) => {
-      if (!isObject(x)) throw new Error('Invalid seat item');
-      return { seatId: String(x.seatId), price: String(x.price) };
-    });
-
     const payload: svc.HoldSeatsInput = {
       showtimeId: String(req.body.showtimeId),
-      seats: normalized,
-      currency:
-        typeof req.body.currency === 'string' ? req.body.currency : 'VND',
+      seatIds: Array.isArray(req.body.seatIds)
+        ? req.body.seatIds.map(String)
+        : [],
+      ...(req.user?.id ? { userId: String(req.user.id) } : {}),
     };
-    if (
-      typeof req.body.expiresInMin === 'number' &&
-      req.body.expiresInMin > 0
-    ) {
-      payload.expiresInMin = req.body.expiresInMin;
-    }
-    if (req.user?.id != null) {
-      payload.userId = String(req.user.id);
-    }
 
     const result = await svc.holdSeats(payload);
-    return res.ok(result, 'Booking created & seats held');
+    return res.ok(result, 'Seats held for 5 minutes');
   } catch (err) {
     next(err);
   }
 }
 
-/** GET /bookings/:id */
-export async function getById(req: Request, res: Response, next: NextFunction) {
+// GET /bookings/:id
+export async function getBooking(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
-    const data = await svc.getDetail(req.params.id);
-    return res.ok(data);
+    const data = await svc.getById(String(req.params.id));
+    return res.ok(data, 'Booking detail');
   } catch (err) {
     next(err);
   }
 }
 
-/** POST /bookings/:id/cancel */
-export async function cancel(req: Request, res: Response, next: NextFunction) {
+// POST /bookings/:id/cancel
+export async function cancelBooking(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
-    await svc.cancel(req.params.id);
-    return res.ok({ ok: true }, 'Booking cancelled');
+    const data = await svc.cancel(String(req.params.id));
+    return res.ok(data, 'Booking canceled');
   } catch (err) {
     next(err);
   }
 }
 
-/** POST /bookings/:id/mark-paid
- *  - đường này cho môi trường dev/admin; thực tế sẽ do Payments webhook gọi
- */
 export async function markPaid(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
   try {
-    await svc.markPaidAndIssueTickets(req.params.id);
+    await svc.finalizeBookingSeats(req.params.id);
     return res.ok({ ok: true }, 'Booking marked as PAID & tickets issued');
   } catch (err) {
     next(err);
   }
 }
+
+export const hold = holdSeats;
+export const cancel = cancelBooking;
+export const getById = getBooking;
 
 /** GET /me/bookings (tuỳ chọn) */
 // export async function myBookings(

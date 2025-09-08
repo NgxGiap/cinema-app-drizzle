@@ -1,7 +1,13 @@
 import { randomUUID } from 'crypto';
-import { and, count, eq, like, SQL } from 'drizzle-orm';
+import { and, asc, count, eq, gt } from 'drizzle-orm';
 import { db } from '../db';
-import { bookings, bookingSeats, rooms, seats } from '../db/schema';
+import {
+  bookingSeatHolds,
+  bookingSeats,
+  cinemas,
+  rooms,
+  seats,
+} from '../db/schema';
 import { NotFoundError, ConflictError } from '../utils/errors/base';
 
 export type SeatType = 'REGULAR' | 'VIP' | 'COUPLE' | 'DISABLED';
@@ -11,10 +17,14 @@ export type SeatListItem = {
   seatNumber: string;
   row: string;
   column: number;
-  type: SeatType;
+  type: (typeof seats.$inferSelect)['type'];
   price: string;
   isActive: boolean;
-  roomId: string;
+  room: {
+    id: string | null;
+    name: string | null;
+    cinema: { id: string | null; name: string | null };
+  };
 };
 
 export type SeatFilters = {
@@ -38,11 +48,13 @@ export type NewSeat = {
 export type UpdateSeat = Partial<Omit<NewSeat, 'roomId'>> & { roomId?: string };
 
 export type SeatMapItem = {
-  seatId: string;
+  id: string;
   seatNumber: string;
   row: string;
   column: number;
-  type: SeatType;
+  type: (typeof seats.$inferSelect)['type'];
+  price: string;
+  isActive: boolean;
   status: 'available' | 'holding' | 'booked';
 };
 
@@ -89,19 +101,15 @@ function indexToLetters(n: number): string {
 
 export async function list(
   page = 1,
-  pageSize = 20,
-  filters?: SeatFilters,
+  pageSize = 50,
+  filters: {
+    roomId?: string;
+    type?: (typeof seats.$inferSelect)['type'];
+    isActive?: boolean;
+    q?: string;
+  } = {},
 ): Promise<{ items: SeatListItem[]; total: number }> {
-  const predicates: SQL<unknown>[] = [];
-  if (filters?.roomId) predicates.push(eq(seats.roomId, filters.roomId));
-  if (filters?.row) predicates.push(eq(seats.row, filters.row));
-  if (typeof filters?.isActive === 'boolean')
-    predicates.push(eq(seats.isActive, filters.isActive));
-  const normalizedType = normalizeType(filters?.type as string | undefined);
-  if (normalizedType) predicates.push(eq(seats.type, normalizedType));
-  if (filters?.q) predicates.push(like(seats.seatNumber, `%${filters.q}%`));
-
-  const offset = (page - 1) * pageSize;
+  const where = filters.roomId ? eq(seats.roomId, filters.roomId) : undefined;
 
   const rows = await db
     .select({
@@ -112,27 +120,40 @@ export async function list(
       type: seats.type,
       price: seats.price,
       isActive: seats.isActive,
-      roomId: seats.roomId,
+      roomId: rooms.id,
+      roomName: rooms.name,
+      cinemaId: cinemas.id,
+      cinemaName: cinemas.name,
     })
     .from(seats)
-    .where(predicates.length ? and(...predicates) : undefined)
+    .leftJoin(rooms, eq(rooms.id, seats.roomId))
+    .leftJoin(cinemas, eq(cinemas.id, rooms.cinemaId))
+    .where(where)
+    .orderBy(asc(seats.row), asc(seats.column))
     .limit(pageSize)
-    .offset(offset);
+    .offset((page - 1) * pageSize);
 
   const [{ total }] = await db
     .select({ total: count() })
     .from(seats)
-    .where(predicates.length ? and(...predicates) : undefined);
+    .where(where);
 
   const items: SeatListItem[] = rows.map((r) => ({
     id: r.id,
     seatNumber: r.seatNumber,
     row: r.row,
-    column: r.column,
-    type: r.type as SeatType,
+    column: Number(r.column),
+    type: r.type,
     price: String(r.price),
     isActive: r.isActive,
-    roomId: r.roomId,
+    room: {
+      id: r.roomId,
+      name: r.roomName,
+      cinema: {
+        id: r.cinemaId,
+        name: r.cinemaName,
+      },
+    },
   }));
 
   return { items, total: Number(total) };
@@ -148,22 +169,35 @@ export async function getById(id: string): Promise<SeatListItem> {
       type: seats.type,
       price: seats.price,
       isActive: seats.isActive,
-      roomId: seats.roomId,
+      roomId: rooms.id,
+      roomName: rooms.name,
+      cinemaId: cinemas.id,
+      cinemaName: cinemas.name,
     })
     .from(seats)
+    .leftJoin(rooms, eq(rooms.id, seats.roomId))
+    .leftJoin(cinemas, eq(cinemas.id, rooms.cinemaId))
     .where(eq(seats.id, id))
     .limit(1);
+
   if (!r) throw new NotFoundError('Seat not found');
 
   return {
     id: r.id,
     seatNumber: r.seatNumber,
     row: r.row,
-    column: r.column,
+    column: Number(r.column),
     type: r.type as SeatType,
     price: String(r.price),
     isActive: r.isActive,
-    roomId: r.roomId,
+    room: {
+      id: r.roomId,
+      name: r.roomName,
+      cinema: {
+        id: r.cinemaId,
+        name: r.cinemaName,
+      },
+    },
   };
 }
 
@@ -313,42 +347,55 @@ export async function getSeatMapWithStatus(
   roomId: string,
   showtimeId: string,
 ): Promise<SeatMapItem[]> {
-  const rows = await db
+  const seatRows = await db
     .select({
-      seatId: seats.id,
+      id: seats.id,
       seatNumber: seats.seatNumber,
       row: seats.row,
       column: seats.column,
       type: seats.type,
-      bookingStatus: bookings.status,
-      expiresAt: bookings.expiresAt,
+      price: seats.price,
+      isActive: seats.isActive,
     })
     .from(seats)
-    .leftJoin(
-      bookingSeats,
-      and(
-        eq(bookingSeats.showtimeId, showtimeId),
-        eq(bookingSeats.seatId, seats.id),
-      ),
-    )
-    .leftJoin(bookings, eq(bookings.id, bookingSeats.bookingId))
-    .where(eq(seats.roomId, roomId));
+    .where(eq(seats.roomId, roomId))
+    .orderBy(asc(seats.row), asc(seats.column));
 
-  return rows.map<SeatMapItem>((r) => {
-    const booked =
-      r.bookingStatus === 'CONFIRMED' || r.bookingStatus === 'PAID';
-    const holding =
-      (r.bookingStatus === 'PENDING' ||
-        r.bookingStatus === 'AWAITING_PAYMENT') &&
-      (!r.expiresAt || r.expiresAt > new Date());
+  const now = new Date();
+
+  const bookedRows = await db
+    .select({ seatId: bookingSeats.seatId })
+    .from(bookingSeats)
+    .where(eq(bookingSeats.showtimeId, showtimeId));
+  const bookedSet = new Set(bookedRows.map((r) => r.seatId));
+
+  const holdingRows = await db
+    .select({ seatId: bookingSeatHolds.seatId })
+    .from(bookingSeatHolds)
+    .where(
+      and(
+        eq(bookingSeatHolds.showtimeId, showtimeId),
+        gt(bookingSeatHolds.expiresAt, now),
+      ),
+    );
+  const holdingSet = new Set(holdingRows.map((r) => r.seatId));
+
+  return seatRows.map<SeatMapItem>((s) => {
+    const status: SeatMapItem['status'] = bookedSet.has(s.id)
+      ? 'booked'
+      : holdingSet.has(s.id)
+        ? 'holding'
+        : 'available';
 
     return {
-      seatId: r.seatId,
-      seatNumber: r.seatNumber,
-      row: r.row,
-      column: r.column,
-      type: r.type as SeatType,
-      status: booked ? 'booked' : holding ? 'holding' : 'available',
+      id: s.id,
+      seatNumber: s.seatNumber,
+      row: s.row,
+      column: Number(s.column),
+      type: s.type,
+      price: String(s.price),
+      isActive: !!s.isActive,
+      status,
     };
   });
 }

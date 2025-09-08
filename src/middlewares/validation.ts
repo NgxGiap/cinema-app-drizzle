@@ -385,17 +385,41 @@ export const validateBookingCreation = [
   handleValidationErrors,
 ];
 
+function bodyHasSeatIds(val: unknown): boolean {
+  if (!val || typeof val !== 'object') return false;
+  const x = (val as Record<string, unknown>).seatIds;
+  return (
+    Array.isArray(x) &&
+    x.length > 0 &&
+    x.every((v: unknown) => typeof v === 'string' && v.trim().length > 0)
+  );
+}
+
+function bodyHasSeatsArray(val: unknown): boolean {
+  if (!val || typeof val !== 'object') return false;
+  const x = (val as Record<string, unknown>).seats;
+  if (!Array.isArray(x) || x.length === 0) return false;
+  return x.every((v: unknown) => {
+    if (!v || typeof v !== 'object') return false;
+    const sid = (v as Record<string, unknown>).seatId;
+    return typeof sid === 'string' && sid.trim().length > 0;
+  });
+}
+
+/** Validation cho POST /bookings/hold */
 export const validateBookingHold = [
-  body('showtimeId').isString().trim().isLength({ min: 1 }),
-  body('currency').optional().isString().trim().isLength({ min: 1, max: 5 }),
-  body('expiresInMin').optional().isInt({ min: 1, max: 120 }).toInt(),
-  body('seats').isArray({ min: 1 }),
-  body('seats.*.seatId').isString().trim().isLength({ min: 1 }),
-  body('seats.*.price')
+  body('showtimeId')
     .isString()
     .trim()
-    .matches(/^\d+(\.\d{1,2})?$/)
-    .withMessage('price must be a decimal string'),
+    .notEmpty()
+    .withMessage('showtimeId is required'),
+
+  body().custom((val: unknown) => {
+    if (bodyHasSeatIds(val) || bodyHasSeatsArray(val)) return true;
+    throw new Error('Provide seatIds: string[] or seats: { seatId: string }[]');
+  }),
+
+  handleValidationErrors,
 ];
 
 const paymentMethodEnum = [

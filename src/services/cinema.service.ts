@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
-import { and, asc, count, eq, inArray, like, SQL } from 'drizzle-orm';
+import { and, asc, count, eq, sql } from 'drizzle-orm';
 import { db } from '../db';
-import { cinemas, rooms } from '../db/schema';
+import { cinemas, rooms, seats } from '../db/schema';
 import { ConflictError, NotFoundError } from '../utils/errors/base';
 
 export type CinemaListItem = {
@@ -36,99 +36,65 @@ export type CreateCinemaInput = {
 
 export type UpdateCinemaInput = Partial<CreateCinemaInput>;
 
-function whereFromFilters(filters?: CinemaFilters): SQL<unknown> | undefined {
-  if (!filters) return undefined;
-  const clauses: SQL<unknown>[] = [];
-  if (filters.city) clauses.push(eq(cinemas.city, filters.city));
-  if (typeof filters.isActive === 'boolean')
-    clauses.push(eq(cinemas.isActive, filters.isActive));
-  if (filters.q) clauses.push(like(cinemas.name, `%${filters.q}%`));
-  return clauses.length ? and(...clauses) : undefined;
-}
-
 export async function list(
   page = 1,
   pageSize = 20,
-  filters?: CinemaFilters,
+  filters?: { city?: string; isActive?: boolean; q?: string },
 ): Promise<{ items: CinemaListItem[]; total: number }> {
-  const where = whereFromFilters(filters);
-  const offset = (page - 1) * pageSize;
+  const where = and(
+    filters?.city ? eq(cinemas.city, filters.city) : undefined,
+    typeof filters?.isActive === 'boolean'
+      ? eq(cinemas.isActive, filters.isActive)
+      : undefined,
+    filters?.q
+      ? sql`(${cinemas.name} LIKE ${'%' + filters.q + '%'})`
+      : undefined,
+  );
 
-  // Lấy danh sách rạp (không kèm count)
-  const baseRows = await db
+  const rows = await db
     .select({
       id: cinemas.id,
       name: cinemas.name,
-      address: cinemas.address,
       city: cinemas.city,
+      address: cinemas.address,
       phone: cinemas.phone,
       email: cinemas.email,
       isActive: cinemas.isActive,
+      roomsCount: sql<number>`COUNT(DISTINCT ${rooms.id})`,
+      // seatsCount: sql<number>`COUNT(${seats.id})`,
     })
     .from(cinemas)
+    .leftJoin(rooms, eq(rooms.cinemaId, cinemas.id))
+    .leftJoin(seats, eq(seats.roomId, rooms.id))
     .where(where)
+    .groupBy(cinemas.id)
     .orderBy(asc(cinemas.name))
     .limit(pageSize)
-    .offset(offset);
+    .offset((page - 1) * pageSize);
 
   const [{ total }] = await db
     .select({ total: count() })
     .from(cinemas)
     .where(where);
-
-  // Nếu không có rạp thì trả sớm
-  if (baseRows.length === 0) {
-    return {
-      items: [],
-      total: Number(total),
-    };
-  }
-
-  const ids = baseRows.map((r) => r.id);
-
-  // Đếm số phòng theo cinemaId
-  const roomCountsRows = await db
-    .select({ cinemaId: rooms.cinemaId, cnt: count() })
-    .from(rooms)
-    .where(inArray(rooms.cinemaId, ids))
-    .groupBy(rooms.cinemaId);
-
-  const roomCounts: Record<string, number> = {};
-  for (const r of roomCountsRows) roomCounts[r.cinemaId] = Number(r.cnt);
-
-  // Đếm số ghế theo cinemaId: join rooms → seats, group by cinemaId
-  // const seatCountsRows = await db
-  //   .select({ cinemaId: rooms.cinemaId, cnt: count() })
-  //   .from(rooms)
-  //   .leftJoin(seats, eq(seats.roomId, rooms.id))
-  //   .where(inArray(rooms.cinemaId, ids))
-  //   .groupBy(rooms.cinemaId);
-
-  // const seatCounts: Record<string, number> = {};
-  // for (const r of seatCountsRows) seatCounts[r.cinemaId] = Number(r.cnt);
-
-  const items: CinemaListItem[] = baseRows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    address: r.address,
-    city: r.city,
-    phone: r.phone ?? null,
-    email: r.email ?? null,
-    isActive: r.isActive,
-    roomsCount: roomCounts[r.id] ?? 0,
-    // seatsCount: seatCounts[r.id] ?? 0,
+  const items: CinemaListItem[] = rows.map((r) => ({
+    ...r,
+    roomsCount: Number(r.roomsCount),
+    // seatsCount: Number(r.seatsCount),
   }));
-
   return { items, total: Number(total) };
 }
 
-export async function getById(id: string): Promise<CinemaDetail> {
-  const [c] = await db
+export async function getById(id: string): Promise<
+  CinemaListItem & {
+    rooms: { id: string; name: string; capacity: number; isActive: boolean }[];
+  }
+> {
+  const [base] = await db
     .select({
       id: cinemas.id,
       name: cinemas.name,
-      address: cinemas.address,
       city: cinemas.city,
+      address: cinemas.address,
       phone: cinemas.phone,
       email: cinemas.email,
       isActive: cinemas.isActive,
@@ -136,30 +102,34 @@ export async function getById(id: string): Promise<CinemaDetail> {
     .from(cinemas)
     .where(eq(cinemas.id, id))
     .limit(1);
+  if (!base) throw new NotFoundError('Cinema not found');
 
-  if (!c) throw new NotFoundError('Cinema not found');
+  const rs = await db
+    .select({
+      id: rooms.id,
+      name: rooms.name,
+      capacity: rooms.capacity,
+      isActive: rooms.isActive,
+    })
+    .from(rooms)
+    .where(eq(rooms.cinemaId, id))
+    .orderBy(asc(rooms.name));
 
-  const [{ rc }] = await db
-    .select({ rc: count() })
+  const seatsAgg = await db
+    .select({ roomsCount: count(rooms.id) })
     .from(rooms)
     .where(eq(rooms.cinemaId, id));
-
-  // const [{ sc }] = await db
-  //   .select({ sc: count() })
-  //   .from(rooms)
-  //   .leftJoin(seats, eq(seats.roomId, rooms.id))
+  // const seatsCnt = await db
+  //   .select({ cnt: count(seats.id) })
+  //   .from(seats)
+  //   .leftJoin(rooms, eq(rooms.id, seats.roomId))
   //   .where(eq(rooms.cinemaId, id));
 
   return {
-    id: c.id,
-    name: c.name,
-    address: c.address,
-    city: c.city,
-    phone: c.phone ?? null,
-    email: c.email ?? null,
-    isActive: c.isActive,
-    roomsCount: Number(rc),
-    // seatsCount: Number(sc),
+    ...base,
+    roomsCount: Number(seatsAgg[0]?.roomsCount ?? 0),
+    // seatsCount: Number(seatsCnt[0]?.cnt ?? 0),
+    rooms: rs.map((r) => ({ ...r, capacity: Number(r.capacity ?? 0) })),
   };
 }
 
