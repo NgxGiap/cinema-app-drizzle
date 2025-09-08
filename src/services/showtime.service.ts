@@ -1,422 +1,413 @@
 import { randomUUID } from 'crypto';
+import { asc, and, count, eq, gte, lte, SQL } from 'drizzle-orm';
 import { db } from '../db';
-import { showtimes, movies, cinemas, seats } from '../db/schema';
-import { eq, count, and, gte, sql, asc } from 'drizzle-orm';
+import { cinemas, movies, rooms, seats, showtimes } from '../db/schema';
 import {
-  NotFoundError,
   ConflictError,
+  NotFoundError,
   ValidationError,
 } from '../utils/errors/base';
 
 export type CreateShowtimeInput = {
   movieId: string;
   cinemaId: string;
-  showDate: Date;
-  showTime: string; // "14:30:00"
-  price: number;
+  roomId?: string;
+  startsAt: Date;
+  price: string;
+  isActive?: boolean;
+};
+
+export type UpdateShowtimeInput = {
+  movieId?: string;
+  cinemaId?: string;
+  roomId?: string;
+  startsAt?: Date;
+  price?: string;
+  isActive?: boolean;
 };
 
 export type ShowtimeFilters = {
-  movieId?: string;
   cinemaId?: string;
-  showDate?: string;
-  city?: string;
+  movieId?: string;
+  roomId?: string;
+  from?: Date;
+  to?: Date;
   isActive?: boolean;
-  fromDate?: string;
-  toDate?: string;
+  q?: string;
 };
 
-export async function list(page = 1, pageSize = 10, filters?: ShowtimeFilters) {
-  const conditions = [];
+export type ShowtimeListItem = {
+  id: string;
+  startsAt: Date;
+  price: string; // luôn string (decimal)
+  totalSeats: number;
+  bookedSeats: number;
+  availableSeats: number;
+  isActive: boolean;
+  movie: {
+    id: string;
+    slug: string;
+    title: string;
+    posterUrl: string | null;
+    state: (typeof movies.$inferSelect)['state'];
+    runtimeMinutes: number;
+    ratingCode: string | null;
+  };
+  cinema: {
+    id: string;
+    name: string;
+    city: string | null;
+    address: string | null;
+  };
+  room: {
+    id: string;
+    name: string;
+  };
+};
 
-  if (filters?.movieId) {
-    conditions.push(eq(showtimes.movieId, filters.movieId));
-  }
-  if (filters?.cinemaId) {
-    conditions.push(eq(showtimes.cinemaId, filters.cinemaId));
-  }
-  if (filters?.showDate) {
-    const date = new Date(filters.showDate);
-    conditions.push(sql`DATE(${showtimes.showDate}) = DATE(${date})`);
-  }
-  if (filters?.fromDate) {
-    conditions.push(gte(showtimes.showDate, new Date(filters.fromDate)));
-  }
-  if (filters?.toDate) {
-    const toDate = new Date(filters.toDate);
-    toDate.setHours(23, 59, 59, 999); // End of day
-    conditions.push(sql`${showtimes.showDate} <= ${toDate}`);
-  }
-  if (filters?.city) {
-    conditions.push(eq(cinemas.city, filters.city));
-  }
-  if (typeof filters?.isActive !== 'undefined') {
-    conditions.push(eq(showtimes.isActive, filters.isActive));
-  }
+function mapRow(r: {
+  id: string;
+  startsAt: Date;
+  price: string | number;
+  totalSeats: number | string | bigint;
+  bookedSeats: number | string | bigint;
+  isActive: boolean;
 
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+  movie: {
+    id: string;
+    slug: string;
+    title: string;
+    posterUrl: string | null;
+    state: (typeof movies.$inferSelect)['state'];
+    runtimeMinutes: number;
+    ratingCode: string | null;
+  } | null;
 
-  const [rows, [{ total }]] = await Promise.all([
-    db
-      .select({
-        id: showtimes.id,
-        movieId: showtimes.movieId,
-        cinemaId: showtimes.cinemaId,
-        showDate: showtimes.showDate,
-        showTime: showtimes.showTime,
-        price: showtimes.price,
-        totalSeats: showtimes.totalSeats,
-        bookedSeats: showtimes.bookedSeats,
-        availableSeats: sql<number>`${showtimes.totalSeats} - ${showtimes.bookedSeats}`,
-        isActive: showtimes.isActive,
-        createdAt: showtimes.createdAt,
-        // Movie info
-        movie: {
-          id: movies.id,
-          title: movies.title,
-          duration: movies.duration,
-          description: movies.description,
-        },
-        // Cinema info
-        cinema: {
-          id: cinemas.id,
-          name: cinemas.name,
-          city: cinemas.city,
-          address: cinemas.address,
-        },
-      })
-      .from(showtimes)
-      .leftJoin(movies, eq(showtimes.movieId, movies.id))
-      .leftJoin(cinemas, eq(showtimes.cinemaId, cinemas.id))
-      .where(whereClause)
-      .orderBy(asc(showtimes.showDate), asc(showtimes.showTime))
-      .limit(pageSize)
-      .offset((page - 1) * pageSize),
-    db
-      .select({ total: count() })
-      .from(showtimes)
-      .leftJoin(cinemas, eq(showtimes.cinemaId, cinemas.id))
-      .where(whereClause),
-  ]);
+  cinema: {
+    id: string;
+    name: string;
+    city: string | null;
+    address: string | null;
+  } | null;
 
-  return { items: rows, total: Number(total) };
+  room: { id: string; name: string } | null;
+}): ShowtimeListItem {
+  const total = Number(r.totalSeats ?? 0);
+  const booked = Number(r.bookedSeats ?? 0);
+  return {
+    id: r.id,
+    startsAt: r.startsAt,
+    price: String(r.price),
+    totalSeats: total,
+    bookedSeats: booked,
+    availableSeats: Math.max(0, total - booked),
+    isActive: r.isActive,
+    movie: {
+      id: r.movie?.id ?? '',
+      slug: r.movie?.slug ?? '',
+      title: r.movie?.title ?? '',
+      posterUrl: r.movie?.posterUrl ?? null,
+      state: r.movie?.state ?? 'COMING_SOON',
+      runtimeMinutes: r.movie?.runtimeMinutes ?? 0,
+      ratingCode: r.movie?.ratingCode ?? null,
+    },
+    cinema: {
+      id: r.cinema?.id ?? '',
+      name: r.cinema?.name ?? '',
+      city: r.cinema?.city ?? null,
+      address: r.cinema?.address ?? null,
+    },
+    room: {
+      id: r.room?.id ?? '',
+      name: r.room?.name ?? '',
+    },
+  };
 }
 
-export async function create(input: CreateShowtimeInput) {
-  // Validate time format
-  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/;
-  if (!timeRegex.test(input.showTime)) {
-    throw new ValidationError('Invalid time format. Use HH:MM:SS');
-  }
+/* ---------------- helpers ---------------- */
 
-  // Validate showDate is not in the past
-  const now = new Date();
-  const showDateTime = new Date(
-    `${input.showDate.toISOString().split('T')[0]} ${input.showTime}`,
-  );
+// async function assertExists() {
+//   // no-op; chỉ để bạn tiện đặt breakpoint nếu cần
+// }
 
-  if (showDateTime < now) {
-    throw new ValidationError('Show date and time cannot be in the past');
-  }
-
-  // Validate movie exists
-  const [movie] = await db
-    .select()
+async function ensureMovie(movieId: string): Promise<void> {
+  const [m] = await db
+    .select({ id: movies.id })
     .from(movies)
-    .where(eq(movies.id, input.movieId))
+    .where(eq(movies.id, movieId))
     .limit(1);
-  if (!movie) throw new NotFoundError('Movie not found');
+  if (!m) throw new NotFoundError('Movie not found');
+}
 
-  // Validate cinema exists and is active
-  const [cinema] = await db
-    .select()
+async function ensureCinema(cinemaId: string): Promise<void> {
+  const [c] = await db
+    .select({ id: cinemas.id })
     .from(cinemas)
-    .where(and(eq(cinemas.id, input.cinemaId), eq(cinemas.isActive, true)))
+    .where(eq(cinemas.id, cinemaId))
     .limit(1);
-  if (!cinema) throw new NotFoundError('Cinema not found or inactive');
+  if (!c) throw new NotFoundError('Cinema not found');
+}
 
-  // Check for time conflicts
-  await checkTimeConflict(
-    input.cinemaId,
-    input.showDate,
-    input.showTime,
-    movie.duration,
-  );
-
-  // Get total seats for this cinema
-  const [seatCount] = await db
-    .select({ count: count() })
-    .from(seats)
-    .where(and(eq(seats.cinemaId, input.cinemaId), eq(seats.isActive, true)));
-
-  if (seatCount.count === 0) {
-    throw new ValidationError('Cinema has no active seats');
-  }
+/** Lấy hoặc tạo Room 1 cho một rạp (compat khi bạn chưa có Rooms module) */
+export async function ensureDefaultRoom(cinemaId: string): Promise<string> {
+  const [r] = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(and(eq(rooms.cinemaId, cinemaId), eq(rooms.name, 'Room 1')))
+    .limit(1);
+  if (r?.id) return r.id;
 
   const id = randomUUID();
-  await db.insert(showtimes).values({
+  await db.insert(rooms).values({
     id,
-    movieId: input.movieId,
-    cinemaId: input.cinemaId,
-    showDate: input.showDate,
-    showTime: input.showTime,
-    price: String(input.price),
-    totalSeats: seatCount.count,
-    bookedSeats: 0,
+    cinemaId,
+    name: 'Room 1',
+    capacity: 0,
     isActive: true,
   });
-
-  return await getById(id);
+  return id;
 }
 
-async function checkTimeConflict(
-  cinemaId: string,
-  showDate: Date,
-  showTime: string,
-  movieDuration: number,
-  excludeId?: string,
-) {
-  const showDateTime = new Date(
-    `${showDate.toISOString().split('T')[0]} ${showTime}`,
-  );
-  const movieEndTime = new Date(
-    showDateTime.getTime() + movieDuration * 60000 + 30 * 60000,
-  ); // +30min buffer
+function toWhere(filters?: ShowtimeFilters): SQL<unknown> | undefined {
+  const clauses: SQL<unknown>[] = [];
+  if (!filters) return undefined;
+  if (filters.cinemaId) clauses.push(eq(showtimes.cinemaId, filters.cinemaId));
+  if (filters.movieId) clauses.push(eq(showtimes.movieId, filters.movieId));
+  if (filters.roomId) clauses.push(eq(showtimes.roomId, filters.roomId));
+  if (filters.isActive !== undefined)
+    clauses.push(eq(showtimes.isActive, filters.isActive));
+  if (filters.from) clauses.push(gte(showtimes.startsAt, filters.from));
+  if (filters.to) clauses.push(lte(showtimes.startsAt, filters.to));
+  return clauses.length ? and(...clauses) : undefined;
+}
 
-  let conditions = [
-    eq(showtimes.cinemaId, cinemaId),
-    sql`DATE(${showtimes.showDate}) = DATE(${showDate})`,
-    eq(showtimes.isActive, true),
-  ];
+/* ---------------- services ---------------- */
 
-  if (excludeId) {
-    conditions.push(sql`${showtimes.id} != ${excludeId}`);
+export async function create(
+  input: CreateShowtimeInput,
+): Promise<ShowtimeListItem> {
+  // Chuẩn hoá & validate startsAt
+  const startsAt =
+    input.startsAt instanceof Date ? input.startsAt : new Date(input.startsAt);
+  if (Number.isNaN(+startsAt)) {
+    throw new ValidationError('startsAt is invalid');
   }
 
-  const conflictingShowtimes = await db
-    .select({
-      id: showtimes.id,
-      showTime: showtimes.showTime,
-      movieDuration: movies.duration,
-    })
-    .from(showtimes)
-    .leftJoin(movies, eq(showtimes.movieId, movies.id))
-    .where(and(...conditions));
+  await ensureMovie(input.movieId);
+  await ensureCinema(input.cinemaId);
 
-  for (const existing of conflictingShowtimes) {
-    const existingStart = new Date(
-      `${showDate.toISOString().split('T')[0]} ${existing.showTime}`,
-    );
-    const existingEnd = new Date(
-      existingStart.getTime() +
-        (existing.movieDuration || 0) * 60000 +
-        30 * 60000,
-    );
+  const roomId = input.roomId || (await ensureDefaultRoom(input.cinemaId));
 
-    // Check if times overlap (with 30-minute buffer)
-    if (
-      (showDateTime >= existingStart && showDateTime < existingEnd) ||
-      (movieEndTime > existingStart && movieEndTime <= existingEnd) ||
-      (showDateTime <= existingStart && movieEndTime >= existingEnd)
-    ) {
-      throw new ConflictError(
-        `Showtime conflicts with existing showtime at ${existing.showTime}. Minimum 30-minute gap required.`,
+  // TRẢ VỀ id từ transaction, để đảm bảo đã commit trước khi gọi getById
+  const newId = await db.transaction(async (tx) => {
+    // unique (room_id, starts_at)
+    const [dup] = await tx
+      .select({ id: showtimes.id })
+      .from(showtimes)
+      .where(
+        and(eq(showtimes.roomId, roomId), eq(showtimes.startsAt, startsAt)),
+      )
+      .limit(1);
+    if (dup)
+      throw new ConflictError('Showtime already exists for this room & time');
+
+    // tổng ghế active của room
+    const [{ total }] = await tx
+      .select({ total: count() })
+      .from(seats)
+      .where(and(eq(seats.roomId, roomId), eq(seats.isActive, true)));
+    const totalSeats = Number(total);
+    if (totalSeats === 0) {
+      throw new ValidationError(
+        'Room has no active seats to schedule a showtime',
       );
     }
-  }
+
+    const id = randomUUID();
+    await tx.insert(showtimes).values({
+      id,
+      movieId: input.movieId,
+      cinemaId: input.cinemaId,
+      roomId,
+      startsAt,
+      price: input.price,
+      totalSeats,
+      bookedSeats: 0,
+      isActive: input.isActive ?? true,
+    });
+
+    return id;
+  });
+  return getById(newId);
 }
 
-export async function getById(id: string) {
-  const [row] = await db
+// ====== REPLACE: list() ======
+export async function list(
+  page = 1,
+  pageSize = 20,
+  filters?: ShowtimeFilters,
+): Promise<{ items: ShowtimeListItem[]; total: number }> {
+  const where = toWhere(filters);
+  const offset = (page - 1) * pageSize;
+
+  const rows = await db
     .select({
       id: showtimes.id,
-      movieId: showtimes.movieId,
-      cinemaId: showtimes.cinemaId,
-      showDate: showtimes.showDate,
-      showTime: showtimes.showTime,
+      startsAt: showtimes.startsAt,
       price: showtimes.price,
       totalSeats: showtimes.totalSeats,
       bookedSeats: showtimes.bookedSeats,
-      availableSeats: sql<number>`${showtimes.totalSeats} - ${showtimes.bookedSeats}`,
       isActive: showtimes.isActive,
-      createdAt: showtimes.createdAt,
+
       movie: {
         id: movies.id,
+        slug: movies.slug,
         title: movies.title,
-        description: movies.description,
-        duration: movies.duration,
-        releaseDate: movies.releaseDate,
+        posterUrl: movies.posterUrl,
+        state: movies.state,
+        runtimeMinutes: movies.runtimeMinutes,
+        ratingCode: movies.ratingCode,
       },
       cinema: {
         id: cinemas.id,
         name: cinemas.name,
-        address: cinemas.address,
         city: cinemas.city,
-        phone: cinemas.phone,
-        email: cinemas.email,
+        address: cinemas.address,
+      },
+      room: {
+        id: rooms.id,
+        name: rooms.name,
       },
     })
     .from(showtimes)
-    .leftJoin(movies, eq(showtimes.movieId, movies.id))
-    .leftJoin(cinemas, eq(showtimes.cinemaId, cinemas.id))
+    .leftJoin(movies, eq(movies.id, showtimes.movieId))
+    .leftJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
+    .leftJoin(rooms, eq(rooms.id, showtimes.roomId))
+    .where(where)
+    .orderBy(asc(showtimes.startsAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(showtimes)
+    .where(where);
+
+  return { items: rows.map(mapRow), total: Number(total) };
+}
+
+// ====== REPLACE (hoặc thêm mới): getById() trả nested ======
+export async function getById(id: string): Promise<ShowtimeListItem> {
+  const [r] = await db
+    .select({
+      id: showtimes.id,
+      startsAt: showtimes.startsAt,
+      price: showtimes.price,
+      totalSeats: showtimes.totalSeats,
+      bookedSeats: showtimes.bookedSeats,
+      isActive: showtimes.isActive,
+
+      movie: {
+        id: movies.id,
+        slug: movies.slug,
+        title: movies.title,
+        posterUrl: movies.posterUrl,
+        state: movies.state,
+        runtimeMinutes: movies.runtimeMinutes,
+        ratingCode: movies.ratingCode,
+      },
+      cinema: {
+        id: cinemas.id,
+        name: cinemas.name,
+        city: cinemas.city,
+        address: cinemas.address,
+      },
+      room: {
+        id: rooms.id,
+        name: rooms.name,
+      },
+    })
+    .from(showtimes)
+    .leftJoin(movies, eq(movies.id, showtimes.movieId))
+    .leftJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
+    .leftJoin(rooms, eq(rooms.id, showtimes.roomId))
     .where(eq(showtimes.id, id))
     .limit(1);
 
-  if (!row) throw new NotFoundError('Showtime not found');
-  return row;
+  if (!r) throw new NotFoundError('Showtime not found'); // nếu bạn đã có NotFoundError
+  return mapRow(r);
 }
 
-export async function update(id: string, input: Partial<CreateShowtimeInput>) {
+export async function update(
+  id: string,
+  patch: UpdateShowtimeInput,
+): Promise<ShowtimeListItem> {
   const [existing] = await db
     .select()
     .from(showtimes)
     .where(eq(showtimes.id, id))
     .limit(1);
-
   if (!existing) throw new NotFoundError('Showtime not found');
 
-  // Check if showtime has bookings
-  if (existing.bookedSeats > 0) {
-    throw new ConflictError('Cannot update showtime with existing bookings');
+  const updates: Partial<typeof showtimes.$inferInsert> = {};
+
+  if (patch.movieId) {
+    await ensureMovie(patch.movieId);
+    updates.movieId = patch.movieId;
   }
-
-  const updateData: Partial<typeof existing> = {};
-
-  if (input.movieId) {
-    const [movie] = await db
-      .select()
-      .from(movies)
-      .where(eq(movies.id, input.movieId))
+  if (patch.cinemaId) {
+    await ensureCinema(patch.cinemaId);
+    updates.cinemaId = patch.cinemaId;
+  }
+  if (patch.roomId) {
+    // chỉ kiểm tra tồn tại; bạn có thể enforce cùng cinema nếu muốn
+    const [r] = await db
+      .select({ id: rooms.id })
+      .from(rooms)
+      .where(eq(rooms.id, patch.roomId))
       .limit(1);
-    if (!movie) throw new NotFoundError('Movie not found');
-    updateData.movieId = input.movieId;
+    if (!r) throw new NotFoundError('Room not found');
+    updates.roomId = patch.roomId;
   }
-
-  if (input.cinemaId) {
-    const [cinema] = await db
-      .select()
-      .from(cinemas)
-      .where(and(eq(cinemas.id, input.cinemaId), eq(cinemas.isActive, true)))
-      .limit(1);
-    if (!cinema) throw new NotFoundError('Cinema not found or inactive');
-    updateData.cinemaId = input.cinemaId;
+  if (patch.startsAt) {
+    if (Number.isNaN(+patch.startsAt))
+      throw new ValidationError('startsAt invalid');
+    updates.startsAt = patch.startsAt;
   }
+  if (typeof patch.price === 'string') updates.price = patch.price;
+  if (typeof patch.isActive === 'boolean') updates.isActive = patch.isActive;
 
-  if (input.showDate) {
-    updateData.showDate = input.showDate;
-  }
+  if (Object.keys(updates).length === 0) return getById(id);
 
-  if (input.showTime) {
-    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/;
-    if (!timeRegex.test(input.showTime)) {
-      throw new ValidationError('Invalid time format. Use HH:MM:SS');
-    }
-    updateData.showTime = input.showTime;
-  }
+  // nếu đổi (roomId|startsAt) bạn có thể kiểm tra trùng lịch tại đây (optional)
 
-  if (input.price !== undefined) {
-    updateData.price = String(input.price);
-  }
-
-  // Check for time conflicts if date/time/cinema changed
-  if (input.showDate || input.showTime || input.cinemaId) {
-    const checkCinemaId = input.cinemaId || existing.cinemaId;
-    const checkDate = input.showDate || existing.showDate;
-    const checkTime = input.showTime || existing.showTime;
-
-    // Get movie duration
-    const movieId = input.movieId || existing.movieId;
-    const [movie] = await db
-      .select()
-      .from(movies)
-      .where(eq(movies.id, movieId))
-      .limit(1);
-
-    if (movie) {
-      await checkTimeConflict(
-        checkCinemaId,
-        checkDate,
-        checkTime,
-        movie.duration,
-        id,
-      );
-    }
-  }
-
-  // Update total seats if cinema changed
-  if (input.cinemaId) {
-    const [seatCount] = await db
-      .select({ count: count() })
-      .from(seats)
-      .where(and(eq(seats.cinemaId, input.cinemaId), eq(seats.isActive, true)));
-    updateData.totalSeats = seatCount.count;
-  }
-
-  await db.update(showtimes).set(updateData).where(eq(showtimes.id, id));
-
-  return await getById(id);
+  await db.update(showtimes).set(updates).where(eq(showtimes.id, id));
+  return getById(id);
 }
 
-export async function remove(id: string) {
-  const [existing] = await db
-    .select()
+export async function toggleStatus(id: string): Promise<ShowtimeListItem> {
+  const [r] = await db
+    .select({ isActive: showtimes.isActive })
     .from(showtimes)
     .where(eq(showtimes.id, id))
     .limit(1);
-
-  if (!existing) throw new NotFoundError('Showtime not found');
-
-  if (existing.bookedSeats > 0) {
-    throw new ConflictError('Cannot delete showtime with existing bookings');
-  }
-
-  await db.delete(showtimes).where(eq(showtimes.id, id));
-  return true;
-}
-
-export async function toggleActive(id: string) {
-  const [existing] = await db
-    .select()
-    .from(showtimes)
-    .where(eq(showtimes.id, id))
-    .limit(1);
-
-  if (!existing) throw new NotFoundError('Showtime not found');
-
-  // Don't allow deactivating if has bookings
-  if (existing.bookedSeats > 0 && existing.isActive) {
-    throw new ConflictError(
-      'Cannot deactivate showtime with existing bookings',
-    );
-  }
-
+  if (!r) throw new NotFoundError('Showtime not found');
   await db
     .update(showtimes)
-    .set({ isActive: !existing.isActive })
+    .set({ isActive: !r.isActive })
     .where(eq(showtimes.id, id));
-
-  return await getById(id);
+  return getById(id);
 }
 
-// Get showtimes by movie
-export async function getByMovie(movieId: string, page = 1, pageSize = 20) {
-  return await list(page, pageSize, { movieId, isActive: true });
+export async function remove(id: string): Promise<{ id: string }> {
+  // tuỳ bạn: có thể kiểm tra đã có booking hay chưa
+  await db.delete(showtimes).where(eq(showtimes.id, id));
+  return { id };
 }
-
-// Get showtimes by cinema
-export async function getByCinema(cinemaId: string, page = 1, pageSize = 20) {
-  return await list(page, pageSize, { cinemaId, isActive: true });
-}
-
-// Get available showtimes for today and upcoming days
 export async function getUpcoming(days = 7, page = 1, pageSize = 50) {
-  const today = new Date();
-  const futureDate = new Date();
-  futureDate.setDate(today.getDate() + days);
-
-  return await list(page, pageSize, {
-    fromDate: today.toISOString().split('T')[0],
-    toDate: futureDate.toISOString().split('T')[0],
-    isActive: true,
-  });
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + days);
+  return list(page, pageSize, { from: start, to: end, isActive: true });
 }

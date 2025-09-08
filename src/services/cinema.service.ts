@@ -1,10 +1,31 @@
 import { randomUUID } from 'crypto';
+import { and, asc, count, eq, sql } from 'drizzle-orm';
 import { db } from '../db';
-import { cinemas, seats } from '../db/schema';
-import { eq, count, and, sql } from 'drizzle-orm';
-import { NotFoundError, ConflictError } from '../utils/errors/base';
+import { cinemas, rooms, seats } from '../db/schema';
+import { ConflictError, NotFoundError } from '../utils/errors/base';
 
-type CreateCinemaInput = {
+export type CinemaListItem = {
+  id: string;
+  name: string;
+  address: string;
+  city: string;
+  phone: string | null;
+  email: string | null;
+  isActive: boolean;
+  roomsCount: number;
+  // seatsCount: number;
+};
+
+// tránh interface rỗng:
+export type CinemaDetail = CinemaListItem;
+
+export type CinemaFilters = {
+  city?: string;
+  isActive?: boolean;
+  q?: string;
+};
+
+export type CreateCinemaInput = {
   name: string;
   address: string;
   city: string;
@@ -13,71 +34,122 @@ type CreateCinemaInput = {
   isActive?: boolean;
 };
 
+export type UpdateCinemaInput = Partial<CreateCinemaInput>;
+
 export async function list(
   page = 1,
-  pageSize = 10,
-  filters?: {
-    city?: string;
-    isActive?: boolean;
-  },
-) {
-  const conditions = [];
-
-  if (filters?.city) {
-    conditions.push(eq(cinemas.city, filters.city));
-  }
-
-  if (typeof filters?.isActive !== 'undefined') {
-    conditions.push(eq(cinemas.isActive, filters.isActive));
-  }
-
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const [cinemaRows, [{ total }]] = await Promise.all([
-    db
-      .select({
-        id: cinemas.id,
-        name: cinemas.name,
-        address: cinemas.address,
-        city: cinemas.city,
-        phone: cinemas.phone,
-        email: cinemas.email,
-        isActive: cinemas.isActive,
-        createdAt: cinemas.createdAt,
-      })
-      .from(cinemas)
-      .where(whereClause)
-      .limit(pageSize)
-      .offset((page - 1) * pageSize),
-    db.select({ total: count() }).from(cinemas).where(whereClause),
-  ]);
-
-  const seatCounts = await Promise.all(
-    cinemaRows.map(async (cinema) => {
-      const [{ count }] = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(seats)
-        .where(eq(seats.cinemaId, cinema.id));
-      return { ...cinema, seatCount: Number(count) };
-    }),
+  pageSize = 20,
+  filters?: { city?: string; isActive?: boolean; q?: string },
+): Promise<{ items: CinemaListItem[]; total: number }> {
+  const where = and(
+    filters?.city ? eq(cinemas.city, filters.city) : undefined,
+    typeof filters?.isActive === 'boolean'
+      ? eq(cinemas.isActive, filters.isActive)
+      : undefined,
+    filters?.q
+      ? sql`(${cinemas.name} LIKE ${'%' + filters.q + '%'})`
+      : undefined,
   );
 
-  return { items: seatCounts, total: Number(total) };
+  const rows = await db
+    .select({
+      id: cinemas.id,
+      name: cinemas.name,
+      city: cinemas.city,
+      address: cinemas.address,
+      phone: cinemas.phone,
+      email: cinemas.email,
+      isActive: cinemas.isActive,
+      roomsCount: sql<number>`COUNT(DISTINCT ${rooms.id})`,
+      // seatsCount: sql<number>`COUNT(${seats.id})`,
+    })
+    .from(cinemas)
+    .leftJoin(rooms, eq(rooms.cinemaId, cinemas.id))
+    .leftJoin(seats, eq(seats.roomId, rooms.id))
+    .where(where)
+    .groupBy(cinemas.id)
+    .orderBy(asc(cinemas.name))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize);
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(cinemas)
+    .where(where);
+  const items: CinemaListItem[] = rows.map((r) => ({
+    ...r,
+    roomsCount: Number(r.roomsCount),
+    // seatsCount: Number(r.seatsCount),
+  }));
+  return { items, total: Number(total) };
 }
 
-export async function create(input: CreateCinemaInput) {
-  // Check if cinema name already exists in the same city
-  const [existingCinema] = await db
-    .select()
-    .from(cinemas)
-    .where(and(eq(cinemas.name, input.name), eq(cinemas.city, input.city)))
-    .limit(1);
-
-  if (existingCinema) {
-    throw new ConflictError(
-      'Cinema with same name already exists in this city',
-    );
+export async function getById(id: string): Promise<
+  CinemaListItem & {
+    rooms: { id: string; name: string; capacity: number; isActive: boolean }[];
   }
+> {
+  const [base] = await db
+    .select({
+      id: cinemas.id,
+      name: cinemas.name,
+      city: cinemas.city,
+      address: cinemas.address,
+      phone: cinemas.phone,
+      email: cinemas.email,
+      isActive: cinemas.isActive,
+    })
+    .from(cinemas)
+    .where(eq(cinemas.id, id))
+    .limit(1);
+  if (!base) throw new NotFoundError('Cinema not found');
+
+  const rs = await db
+    .select({
+      id: rooms.id,
+      name: rooms.name,
+      capacity: rooms.capacity,
+      isActive: rooms.isActive,
+    })
+    .from(rooms)
+    .where(eq(rooms.cinemaId, id))
+    .orderBy(asc(rooms.name));
+
+  const seatsAgg = await db
+    .select({ roomsCount: count(rooms.id) })
+    .from(rooms)
+    .where(eq(rooms.cinemaId, id));
+  // const seatsCnt = await db
+  //   .select({ cnt: count(seats.id) })
+  //   .from(seats)
+  //   .leftJoin(rooms, eq(rooms.id, seats.roomId))
+  //   .where(eq(rooms.cinemaId, id));
+
+  return {
+    ...base,
+    roomsCount: Number(seatsAgg[0]?.roomsCount ?? 0),
+    // seatsCount: Number(seatsCnt[0]?.cnt ?? 0),
+    rooms: rs.map((r) => ({ ...r, capacity: Number(r.capacity ?? 0) })),
+  };
+}
+
+/** unique name + city (tuỳ policy, bạn có thể bỏ) */
+async function assertUniqueNameInCity(
+  name: string,
+  city: string,
+  excludeId?: string,
+) {
+  const q = db
+    .select({ id: cinemas.id })
+    .from(cinemas)
+    .where(and(eq(cinemas.name, name), eq(cinemas.city, city)));
+  const rows = await q;
+  const dup = rows.find((r) => r.id !== excludeId);
+  if (dup) throw new ConflictError('Cinema name already exists in this city');
+}
+
+export async function create(input: CreateCinemaInput): Promise<CinemaDetail> {
+  await assertUniqueNameInCity(input.name, input.city);
 
   const id = randomUUID();
   await db.insert(cinemas).values({
@@ -87,163 +159,68 @@ export async function create(input: CreateCinemaInput) {
     city: input.city,
     phone: input.phone ?? null,
     email: input.email ?? null,
-    isActive: input.isActive ?? true,
+    isActive: typeof input.isActive === 'boolean' ? input.isActive : true,
   });
 
-  const [row] = await db
+  return getById(id);
+}
+
+export async function update(
+  id: string,
+  patch: UpdateCinemaInput,
+): Promise<CinemaDetail> {
+  const [existing] = await db
     .select()
     .from(cinemas)
     .where(eq(cinemas.id, id))
     .limit(1);
+  if (!existing) throw new NotFoundError('Cinema not found');
 
-  if (!row) throw new Error('Failed to create cinema');
-  return row;
+  const nextName = patch.name ?? existing.name;
+  const nextCity = patch.city ?? existing.city;
+  if (nextName !== existing.name || nextCity !== existing.city) {
+    await assertUniqueNameInCity(nextName, nextCity, id);
+  }
+
+  const data: Partial<typeof cinemas.$inferInsert> = {};
+  if (typeof patch.name === 'string') data.name = patch.name;
+  if (typeof patch.address === 'string') data.address = patch.address;
+  if (typeof patch.city === 'string') data.city = patch.city;
+  if (typeof patch.phone === 'string') data.phone = patch.phone;
+  if (typeof patch.email === 'string') data.email = patch.email;
+  if (typeof patch.isActive === 'boolean') data.isActive = patch.isActive;
+
+  if (Object.keys(data).length > 0) {
+    await db.update(cinemas).set(data).where(eq(cinemas.id, id));
+  }
+  return getById(id); // ✅ trả detail
 }
 
-export async function getById(id: string) {
+// toggleStatus: Promise<CinemaDetail>
+export async function toggleStatus(id: string): Promise<CinemaDetail> {
   const [row] = await db
-    .select({
-      id: cinemas.id,
-      name: cinemas.name,
-      address: cinemas.address,
-      city: cinemas.city,
-      phone: cinemas.phone,
-      email: cinemas.email,
-      isActive: cinemas.isActive,
-      createdAt: cinemas.createdAt,
-
-      seatCount: sql<number>`(
-        SELECT COUNT(*) FROM ${seats}
-        WHERE ${seats.cinemaId} = ${sql.placeholder('cinemaId')}
-      )`.as('seat_count'),
-
-      activeSeatCount: sql<number>`(
-        SELECT COUNT(*) FROM ${seats}
-        WHERE ${seats.cinemaId} = ${sql.placeholder('cinemaId')}
-        AND ${seats.isActive} = 1
-      )`.as('active_seat_count'),
-    })
+    .select({ isActive: cinemas.isActive })
     .from(cinemas)
     .where(eq(cinemas.id, id))
-    .limit(1)
-    .execute({ cinemaId: id });
-
+    .limit(1);
   if (!row) throw new NotFoundError('Cinema not found');
-  return row;
-}
-
-export async function update(id: string, input: Partial<CreateCinemaInput>) {
-  const [existingCinema] = await db
-    .select()
-    .from(cinemas)
-    .where(eq(cinemas.id, id))
-    .limit(1);
-
-  if (!existingCinema) throw new NotFoundError('Cinema not found');
-
-  // Check name uniqueness if name or city is being changed
-  if (
-    (input.name && input.name !== existingCinema.name) ||
-    (input.city && input.city !== existingCinema.city)
-  ) {
-    const checkName = input.name ?? existingCinema.name;
-    const checkCity = input.city ?? existingCinema.city;
-
-    const [nameExists] = await db
-      .select()
-      .from(cinemas)
-      .where(
-        and(
-          eq(cinemas.name, checkName),
-          eq(cinemas.city, checkCity),
-          sql`id != ${id}`, // Exclude current cinema
-        ),
-      )
-      .limit(1);
-
-    if (nameExists) {
-      throw new ConflictError(
-        'Cinema with same name already exists in this city',
-      );
-    }
-  }
-
   await db
     .update(cinemas)
-    .set({
-      name: input.name ?? existingCinema.name,
-      address: input.address ?? existingCinema.address,
-      city: input.city ?? existingCinema.city,
-      phone: input.phone ?? existingCinema.phone,
-      email: input.email ?? existingCinema.email,
-      isActive: input.isActive ?? existingCinema.isActive,
-    })
+    .set({ isActive: !row.isActive })
     .where(eq(cinemas.id, id));
-
-  const [updatedRow] = await db
-    .select()
-    .from(cinemas)
-    .where(eq(cinemas.id, id))
-    .limit(1);
-
-  if (!updatedRow) throw new Error('Failed to update cinema');
-  return updatedRow;
+  return getById(id); // ✅ trả detail
 }
 
-export async function remove(id: string) {
-  const [existingCinema] = await db
-    .select()
-    .from(cinemas)
-    .where(eq(cinemas.id, id))
-    .limit(1);
-
-  if (!existingCinema) throw new NotFoundError('Cinema not found');
-
-  // Check if cinema has seats
-  const [seatCount] = await db
-    .select({ count: count() })
-    .from(seats)
-    .where(eq(seats.cinemaId, id));
-
-  if (seatCount.count > 0) {
-    throw new ConflictError(
-      'Cannot delete cinema that has seats. Delete seats first.',
-    );
-  }
-
+// remove: Promise<{ id: string }>
+export async function remove(id: string): Promise<{ id: string }> {
   await db.delete(cinemas).where(eq(cinemas.id, id));
-  return true;
+  return { id }; // ✅ trả id
 }
 
-export async function toggleActive(id: string) {
-  const [existingCinema] = await db
-    .select()
-    .from(cinemas)
-    .where(eq(cinemas.id, id))
-    .limit(1);
-
-  if (!existingCinema) throw new NotFoundError('Cinema not found');
-
-  await db
-    .update(cinemas)
-    .set({ isActive: !existingCinema.isActive })
-    .where(eq(cinemas.id, id));
-
-  const [updatedRow] = await db
-    .select()
-    .from(cinemas)
-    .where(eq(cinemas.id, id))
-    .limit(1);
-
-  if (!updatedRow) throw new Error('Failed to toggle cinema status');
-  return updatedRow;
-}
-
-export async function getCitiesList() {
-  const cities = await db
+export async function getCitiesList(): Promise<string[]> {
+  const rows = await db
     .selectDistinct({ city: cinemas.city })
     .from(cinemas)
     .where(eq(cinemas.isActive, true));
-
-  return cities.map((c) => c.city);
+  return rows.map((r) => r.city);
 }

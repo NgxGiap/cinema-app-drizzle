@@ -1,40 +1,63 @@
 import { Router } from 'express';
 import * as c from '../controllers/movie.controller';
-import { requireAuth, optionalAuth } from '../middlewares/auth';
+import { optionalAuth, requireAuth } from '../middlewares/auth';
 import { authorize } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
 import {
-  validateMovieCreation,
-  validateMovieQuery,
+  validatePagination,
+  validateMovieListQuery,
+  validateMovieCreate,
+  validateMovieUpdate,
+  validateIdParam,
+  handleValidationErrors,
 } from '../middlewares/validation';
 
 const r = Router();
 
-// Public routes - anyone can view movies
+/** Public */
 r.get(
   '/',
-  optionalAuth, // Optional auth for potential future personalization
-  validateMovieQuery, // Use the new validation with filters
+  optionalAuth,
+  validatePagination,
+  validateMovieListQuery,
+  handleValidationErrors,
   c.listMovies,
 );
+r.get('/slug/:slug', optionalAuth, handleValidationErrors, c.getMovieBySlug); // public by slug
+r.get(
+  '/:id',
+  optionalAuth,
+  validateIdParam,
+  handleValidationErrors,
+  c.getMovie,
+);
 
-r.get('/:id', optionalAuth, c.getMovie);
-
-// Protected routes - Admin/Manager only
+/** Admin */
 r.post(
   '/',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES),
-  validateMovieCreation,
+  validateMovieCreate,
+  handleValidationErrors,
   c.createMovie,
 );
 
-r.put('/:id', requireAuth, authorize(Permission.MANAGE_MOVIES), c.updateMovie);
+r.put(
+  '/:id',
+  requireAuth,
+  authorize(Permission.MANAGE_MOVIES),
+  validateIdParam,
+  validateMovieUpdate,
+  handleValidationErrors,
+  c.updateMovie,
+);
 
 r.delete(
   '/:id',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES),
+  validateIdParam,
+  handleValidationErrors,
   c.deleteMovie,
 );
 

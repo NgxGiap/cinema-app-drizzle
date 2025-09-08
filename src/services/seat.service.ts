@@ -1,296 +1,501 @@
 import { randomUUID } from 'crypto';
-import { and, eq, like, sql, count } from 'drizzle-orm';
+import { and, asc, count, eq, gt } from 'drizzle-orm';
 import { db } from '../db';
-import { seats, cinemas } from '../db/schema';
+import {
+  bookingSeatHolds,
+  bookingSeats,
+  cinemas,
+  rooms,
+  seats,
+} from '../db/schema';
 import { NotFoundError, ConflictError } from '../utils/errors/base';
 
-export type SeatRow = typeof seats.$inferSelect;
+export type SeatType = 'REGULAR' | 'VIP' | 'COUPLE' | 'DISABLED';
 
-export type NewSeat = {
-  cinemaId: string;
+export type SeatListItem = {
+  id: string;
   seatNumber: string;
   row: string;
   column: number;
-  type?: 'regular' | 'vip' | 'couple' | 'disabled';
+  type: (typeof seats.$inferSelect)['type'];
+  price: string;
+  isActive: boolean;
+  room: {
+    id: string | null;
+    name: string | null;
+    cinema: { id: string | null; name: string | null };
+  };
+};
+
+export type SeatFilters = {
+  roomId?: string;
+  type?: SeatType | Lowercase<SeatType>;
+  row?: string;
+  isActive?: boolean;
+  q?: string;
+};
+
+export type NewSeat = {
+  roomId: string;
+  seatNumber: string;
+  row: string;
+  column: number;
+  type?: SeatType | Lowercase<SeatType>;
   price: string;
   isActive?: boolean;
 };
 
-export type SeatFilters = {
-  cinemaId?: string;
-  type?: 'regular' | 'vip' | 'couple' | 'disabled';
-  row?: string;
-  isActive?: boolean;
+export type UpdateSeat = Partial<Omit<NewSeat, 'roomId'>> & { roomId?: string };
+
+export type SeatMapItem = {
+  id: string;
+  seatNumber: string;
+  row: string;
+  column: number;
+  type: (typeof seats.$inferSelect)['type'];
+  price: string;
+  isActive: boolean;
+  status: 'available' | 'holding' | 'booked';
 };
+
+/* helpers */
+
+function normalizeType(t?: string | null): SeatType | undefined {
+  if (!t) return undefined;
+  const up = t.toUpperCase();
+  if (
+    up === 'REGULAR' ||
+    up === 'VIP' ||
+    up === 'COUPLE' ||
+    up === 'DISABLED'
+  ) {
+    return up as SeatType;
+  }
+  return undefined;
+}
+
+export type LayoutApplyMode = 'replace' | 'merge';
+
+function makeRowLabels(rows: number, startFrom: string): string[] {
+  // Excel-like: A..Z, AA..AZ, BA.. (đủ cho rạp)
+  const labels: string[] = [];
+  const startIndex = Math.max(
+    0,
+    (startFrom.toUpperCase().charCodeAt(0) || 65) - 65,
+  );
+  for (let i = 0; i < rows; i++) {
+    labels.push(indexToLetters(startIndex + i));
+  }
+  return labels;
+}
+function indexToLetters(n: number): string {
+  let s = '';
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+}
+
+/* queries */
 
 export async function list(
   page = 1,
-  pageSize = 10,
-  filters?: SeatFilters,
-): Promise<{ items: SeatRow[]; total: number }> {
-  const conditions = [];
+  pageSize = 50,
+  filters: {
+    roomId?: string;
+    type?: (typeof seats.$inferSelect)['type'];
+    isActive?: boolean;
+    q?: string;
+  } = {},
+): Promise<{ items: SeatListItem[]; total: number }> {
+  const where = filters.roomId ? eq(seats.roomId, filters.roomId) : undefined;
 
-  if (filters?.cinemaId) {
-    conditions.push(eq(seats.cinemaId, filters.cinemaId));
-  }
-  if (filters?.type) {
-    conditions.push(eq(seats.type, filters.type));
-  }
-  if (filters?.row) {
-    conditions.push(like(seats.row, `%${filters.row}%`));
-  }
-  if (typeof filters?.isActive === 'boolean') {
-    conditions.push(eq(seats.isActive, filters.isActive));
-  }
+  const rows = await db
+    .select({
+      id: seats.id,
+      seatNumber: seats.seatNumber,
+      row: seats.row,
+      column: seats.column,
+      type: seats.type,
+      price: seats.price,
+      isActive: seats.isActive,
+      roomId: rooms.id,
+      roomName: rooms.name,
+      cinemaId: cinemas.id,
+      cinemaName: cinemas.name,
+    })
+    .from(seats)
+    .leftJoin(rooms, eq(rooms.id, seats.roomId))
+    .leftJoin(cinemas, eq(cinemas.id, rooms.cinemaId))
+    .where(where)
+    .orderBy(asc(seats.row), asc(seats.column))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize);
 
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(seats)
+    .where(where);
 
-  const [rows, [{ total }]] = await Promise.all([
-    db
-      .select()
-      .from(seats)
-      .where(whereClause)
-      .limit(pageSize)
-      .offset((page - 1) * pageSize),
-    db.select({ total: count() }).from(seats).where(whereClause),
-  ]);
+  const items: SeatListItem[] = rows.map((r) => ({
+    id: r.id,
+    seatNumber: r.seatNumber,
+    row: r.row,
+    column: Number(r.column),
+    type: r.type,
+    price: String(r.price),
+    isActive: r.isActive,
+    room: {
+      id: r.roomId,
+      name: r.roomName,
+      cinema: {
+        id: r.cinemaId,
+        name: r.cinemaName,
+      },
+    },
+  }));
 
-  return { items: rows, total: Number(total) };
+  return { items, total: Number(total) };
 }
 
-export async function createOne(input: NewSeat) {
-  // Validate cinema exists
-  const [cinema] = await db
-    .select()
-    .from(cinemas)
-    .where(eq(cinemas.id, input.cinemaId))
+export async function getById(id: string): Promise<SeatListItem> {
+  const [r] = await db
+    .select({
+      id: seats.id,
+      seatNumber: seats.seatNumber,
+      row: seats.row,
+      column: seats.column,
+      type: seats.type,
+      price: seats.price,
+      isActive: seats.isActive,
+      roomId: rooms.id,
+      roomName: rooms.name,
+      cinemaId: cinemas.id,
+      cinemaName: cinemas.name,
+    })
+    .from(seats)
+    .leftJoin(rooms, eq(rooms.id, seats.roomId))
+    .leftJoin(cinemas, eq(cinemas.id, rooms.cinemaId))
+    .where(eq(seats.id, id))
     .limit(1);
 
-  if (!cinema) {
-    throw new NotFoundError('Cinema not found');
-  }
+  if (!r) throw new NotFoundError('Seat not found');
 
-  // Check for duplicate seat in the same cinema
-  const [existingSeat] = await db
-    .select()
+  return {
+    id: r.id,
+    seatNumber: r.seatNumber,
+    row: r.row,
+    column: Number(r.column),
+    type: r.type as SeatType,
+    price: String(r.price),
+    isActive: r.isActive,
+    room: {
+      id: r.roomId,
+      name: r.roomName,
+      cinema: {
+        id: r.cinemaId,
+        name: r.cinemaName,
+      },
+    },
+  };
+}
+
+export async function create(input: NewSeat): Promise<SeatListItem> {
+  const [room] = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(eq(rooms.id, input.roomId))
+    .limit(1);
+  if (!room) throw new NotFoundError('Room not found');
+
+  const [dup] = await db
+    .select({ id: seats.id })
     .from(seats)
     .where(
       and(
-        eq(seats.cinemaId, input.cinemaId),
+        eq(seats.roomId, input.roomId),
         eq(seats.seatNumber, input.seatNumber),
       ),
     )
     .limit(1);
-
-  if (existingSeat) {
-    throw new ConflictError('Seat number already exists in this cinema');
-  }
-
-  // Check for duplicate position (row + column) in the same cinema
-  const [existingPosition] = await db
-    .select()
-    .from(seats)
-    .where(
-      and(
-        eq(seats.cinemaId, input.cinemaId),
-        eq(seats.row, input.row),
-        eq(seats.column, input.column),
-      ),
-    )
-    .limit(1);
-
-  if (existingPosition) {
-    throw new ConflictError(
-      'Seat position (row + column) already exists in this cinema',
-    );
-  }
+  if (dup) throw new ConflictError('Seat number already exists in this room');
 
   const id = randomUUID();
-  const insertData = {
+  const type = normalizeType(input.type as string | undefined) ?? 'REGULAR';
+
+  await db.insert(seats).values({
     id,
-    cinemaId: input.cinemaId,
+    roomId: input.roomId,
     seatNumber: input.seatNumber,
     row: input.row,
     column: input.column,
-    type: input.type ?? 'regular',
+    type,
     price: input.price,
     isActive: input.isActive ?? true,
-  };
+  });
 
-  await db.insert(seats).values(insertData);
-
-  const [row] = await db.select().from(seats).where(eq(seats.id, id)).limit(1);
-
-  if (!row) throw new Error('Failed to create seat');
-  return row;
+  return getById(id);
 }
 
-export async function bulkCreate(inputs: NewSeat[]) {
-  if (inputs.length === 0) return { inserted: 0 };
+export async function createMany(
+  inputs: ReadonlyArray<NewSeat>,
+): Promise<{ inserted: number }> {
+  if (!inputs.length) return { inserted: 0 };
 
-  // Validate all cinemas exist
-  const cinemaIds = [...new Set(inputs.map((s) => s.cinemaId))];
-  for (const cinemaId of cinemaIds) {
-    const [cinema] = await db
-      .select()
-      .from(cinemas)
-      .where(eq(cinemas.id, cinemaId))
-      .limit(1);
+  const roomId = inputs[0].roomId;
+  const [room] = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(eq(rooms.id, roomId))
+    .limit(1);
+  if (!room) throw new NotFoundError('Room not found');
 
-    if (!cinema) {
-      throw new NotFoundError(`Cinema with ID ${cinemaId} not found`);
-    }
+  const keys = new Set<string>();
+  for (const s of inputs) {
+    const k = `${s.roomId}:${s.seatNumber}`;
+    if (keys.has(k))
+      throw new ConflictError(`Duplicated seat in payload: ${s.seatNumber}`);
+    keys.add(k);
   }
 
-  // Check for duplicates within the input array
-  const seatKeys = new Set();
-  const positionKeys = new Set();
+  const existed = await db
+    .select({ seatNumber: seats.seatNumber })
+    .from(seats)
+    .where(eq(seats.roomId, roomId));
+  const existSet = new Set(existed.map((x) => x.seatNumber));
 
-  for (const input of inputs) {
-    const seatKey = `${input.cinemaId}-${input.seatNumber}`;
-    const positionKey = `${input.cinemaId}-${input.row}-${input.column}`;
-
-    if (seatKeys.has(seatKey)) {
-      throw new ConflictError(
-        `Duplicate seat number ${input.seatNumber} in cinema ${input.cinemaId}`,
-      );
-    }
-    if (positionKeys.has(positionKey)) {
-      throw new ConflictError(
-        `Duplicate position ${input.row}-${input.column} in cinema ${input.cinemaId}`,
-      );
-    }
-
-    seatKeys.add(seatKey);
-    positionKeys.add(positionKey);
+  const conflicts = inputs.filter((x) => existSet.has(x.seatNumber));
+  if (conflicts.length) {
+    throw new ConflictError(
+      `Seat(s) already exist: ${conflicts.map((c) => c.seatNumber).join(', ')}`,
+    );
   }
 
-  // Check for existing seats in database
-  for (const input of inputs) {
-    const [existingSeat] = await db
-      .select()
-      .from(seats)
-      .where(
-        and(
-          eq(seats.cinemaId, input.cinemaId),
-          eq(seats.seatNumber, input.seatNumber),
-        ),
-      )
-      .limit(1);
+  await db.insert(seats).values(
+    inputs.map((s) => ({
+      id: randomUUID(),
+      roomId: s.roomId,
+      seatNumber: s.seatNumber,
+      row: s.row,
+      column: s.column,
+      type: normalizeType(s.type as string | undefined) ?? 'REGULAR',
+      price: s.price,
+      isActive: s.isActive ?? true,
+    })),
+  );
 
-    if (existingSeat) {
-      throw new ConflictError(
-        `Seat ${input.seatNumber} already exists in cinema ${input.cinemaId}`,
-      );
-    }
-  }
-
-  const values = inputs.map((s) => ({
-    id: randomUUID(),
-    cinemaId: s.cinemaId,
-    seatNumber: s.seatNumber,
-    row: s.row,
-    column: s.column,
-    type: s.type ?? ('regular' as const),
-    price: s.price,
-    isActive: s.isActive ?? true,
-  }));
-
-  await db.insert(seats).values(values);
-  return { inserted: values.length };
-}
-
-export async function getById(id: string) {
-  const [row] = await db.select().from(seats).where(eq(seats.id, id)).limit(1);
-
-  if (!row) throw new NotFoundError('Seat not found');
-  return row;
+  return { inserted: inputs.length };
 }
 
 export async function updateById(
   id: string,
-  patch: Partial<{
-    seatNumber: string;
-    row: string;
-    column: number;
-    type: 'regular' | 'vip' | 'couple' | 'disabled';
-    price: string;
-    isActive: boolean;
-  }>,
-) {
-  const [existingSeat] = await db
+  patch: UpdateSeat,
+): Promise<SeatListItem> {
+  const [existing] = await db
     .select()
     .from(seats)
     .where(eq(seats.id, id))
     .limit(1);
+  if (!existing) throw new NotFoundError('Seat not found');
 
-  if (!existingSeat) throw new NotFoundError('Seat not found');
-
-  // Check for conflicts if updating seat number, row, or column
-  if (patch.seatNumber && patch.seatNumber !== existingSeat.seatNumber) {
-    const [conflictSeat] = await db
-      .select()
-      .from(seats)
-      .where(
-        and(
-          eq(seats.cinemaId, existingSeat.cinemaId),
-          eq(seats.seatNumber, patch.seatNumber),
-          sql`${seats.id} != ${id}`,
-        ),
-      )
-      .limit(1);
-
-    if (conflictSeat) {
-      throw new ConflictError('Seat number already exists in this cinema');
-    }
-  }
+  const nextRoomId = patch.roomId ?? existing.roomId;
+  const nextSeatNumber = patch.seatNumber ?? existing.seatNumber;
 
   if (
-    (patch.row && patch.row !== existingSeat.row) ||
-    (patch.column && patch.column !== existingSeat.column)
+    nextRoomId !== existing.roomId ||
+    nextSeatNumber !== existing.seatNumber
   ) {
-    const checkRow = patch.row ?? existingSeat.row;
-    const checkColumn = patch.column ?? existingSeat.column;
-
-    const [conflictPosition] = await db
-      .select()
+    const [dup] = await db
+      .select({ id: seats.id })
       .from(seats)
       .where(
-        and(
-          eq(seats.cinemaId, existingSeat.cinemaId),
-          eq(seats.row, checkRow),
-          eq(seats.column, checkColumn),
-          sql`${seats.id} != ${id}`,
-        ),
+        and(eq(seats.roomId, nextRoomId), eq(seats.seatNumber, nextSeatNumber)),
       )
       .limit(1);
-
-    if (conflictPosition) {
-      throw new ConflictError('Seat position already exists in this cinema');
-    }
+    if (dup) throw new ConflictError('Seat number already exists in this room');
   }
 
-  await db.update(seats).set(patch).where(eq(seats.id, id));
+  const data: Partial<typeof seats.$inferInsert> = {};
+  if (patch.roomId) data.roomId = patch.roomId;
+  if (patch.seatNumber) data.seatNumber = patch.seatNumber;
+  if (patch.row) data.row = patch.row;
+  if (typeof patch.column === 'number') data.column = patch.column;
+  if (typeof patch.price === 'string') data.price = patch.price;
+  if (typeof patch.isActive === 'boolean') data.isActive = patch.isActive;
+  const t = normalizeType(patch.type as string | undefined);
+  if (t) data.type = t;
 
-  const [updatedRow] = await db
-    .select()
-    .from(seats)
-    .where(eq(seats.id, id))
-    .limit(1);
-
-  if (!updatedRow) throw new Error('Failed to update seat');
-  return updatedRow;
+  if (Object.keys(data).length) {
+    await db.update(seats).set(data).where(eq(seats.id, id));
+  }
+  return getById(id);
 }
 
-export async function removeById(id: string) {
-  const [existingSeat] = await db
+export async function removeById(id: string): Promise<{ id: string }> {
+  const [existing] = await db
     .select()
     .from(seats)
     .where(eq(seats.id, id))
     .limit(1);
-
-  if (!existingSeat) throw new NotFoundError('Seat not found');
-
+  if (!existing) throw new NotFoundError('Seat not found');
   await db.delete(seats).where(eq(seats.id, id));
-  return true;
+  return { id };
+}
+
+export async function getSeatMapWithStatus(
+  roomId: string,
+  showtimeId: string,
+): Promise<SeatMapItem[]> {
+  const seatRows = await db
+    .select({
+      id: seats.id,
+      seatNumber: seats.seatNumber,
+      row: seats.row,
+      column: seats.column,
+      type: seats.type,
+      price: seats.price,
+      isActive: seats.isActive,
+    })
+    .from(seats)
+    .where(eq(seats.roomId, roomId))
+    .orderBy(asc(seats.row), asc(seats.column));
+
+  const now = new Date();
+
+  const bookedRows = await db
+    .select({ seatId: bookingSeats.seatId })
+    .from(bookingSeats)
+    .where(eq(bookingSeats.showtimeId, showtimeId));
+  const bookedSet = new Set(bookedRows.map((r) => r.seatId));
+
+  const holdingRows = await db
+    .select({ seatId: bookingSeatHolds.seatId })
+    .from(bookingSeatHolds)
+    .where(
+      and(
+        eq(bookingSeatHolds.showtimeId, showtimeId),
+        gt(bookingSeatHolds.expiresAt, now),
+      ),
+    );
+  const holdingSet = new Set(holdingRows.map((r) => r.seatId));
+
+  return seatRows.map<SeatMapItem>((s) => {
+    const status: SeatMapItem['status'] = bookedSet.has(s.id)
+      ? 'booked'
+      : holdingSet.has(s.id)
+        ? 'holding'
+        : 'available';
+
+    return {
+      id: s.id,
+      seatNumber: s.seatNumber,
+      row: s.row,
+      column: Number(s.column),
+      type: s.type,
+      price: String(s.price),
+      isActive: !!s.isActive,
+      status,
+    };
+  });
+}
+
+export function buildSeatsFromLayout(
+  roomId: string,
+  layout: import('../types/seat-layout').SeatLayout,
+): NewSeat[] {
+  const out: NewSeat[] = [];
+  const defaultType: SeatType = layout.defaultType ?? 'REGULAR';
+
+  for (const block of layout.blocks) {
+    const firstCol =
+      block.firstColumn && block.firstColumn > 0 ? block.firstColumn : 1;
+    const rowLabels =
+      Array.isArray(block.rowLabels) && block.rowLabels.length === block.rows
+        ? block.rowLabels
+        : makeRowLabels(block.rows, block.rowStartFrom ?? 'A');
+
+    const aisleCols = new Set<number>((block.aisles?.cols ?? []).map(Number));
+    const aisleRows = new Set<number>((block.aisles?.rows ?? []).map(Number));
+    const holeKey = new Set<string>(
+      (block.holes ?? []).map((h) => `${h.row}:${h.col}`),
+    );
+
+    for (let r = 1; r <= block.rows; r++) {
+      if (aisleRows.has(r)) continue;
+      const rowLabel = rowLabels[r - 1];
+
+      for (let c = 1; c <= block.cols; c++) {
+        if (aisleCols.has(c)) continue;
+        if (holeKey.has(`${r}:${c}`)) continue;
+
+        const colNo = firstCol + (c - 1);
+        const seatType: SeatType =
+          (block.typeByRow && block.typeByRow[rowLabel]) ??
+          (block.typeByCol && block.typeByCol[colNo]) ??
+          defaultType;
+
+        const price =
+          (block.priceByType && block.priceByType[seatType]) ??
+          layout.defaultPrice;
+
+        out.push({
+          roomId,
+          seatNumber: `${rowLabel}${colNo}`,
+          row: rowLabel,
+          column: colNo,
+          price,
+          type: seatType,
+          isActive: true,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** Xem trước (không ghi DB) */
+export async function previewLayout(
+  roomId: string,
+  layout: import('../types/seat-layout').SeatLayout,
+): Promise<NewSeat[]> {
+  return buildSeatsFromLayout(roomId, layout);
+}
+
+/** Áp layout → ghi DB
+ * mode:
+ *  - 'replace': xóa tất ghế của room rồi insert mới
+ *  - 'merge'  : chỉ insert những seatNumber chưa tồn tại (giữ nguyên ghế cũ)
+ */
+export async function applyLayout(
+  roomId: string,
+  layout: import('../types/seat-layout').SeatLayout,
+  mode: LayoutApplyMode = 'replace',
+): Promise<{ inserted: number }> {
+  const seatsToInsert = buildSeatsFromLayout(roomId, layout);
+  if (seatsToInsert.length === 0) return { inserted: 0 };
+
+  await db.transaction(async (tx) => {
+    if (mode === 'replace') {
+      await tx.delete(seats).where(eq(seats.roomId, roomId));
+    }
+
+    // Lấy seatNumber đã tồn tại (khi merge)
+    let filtered = seatsToInsert;
+    if (mode === 'merge') {
+      const existing = await tx
+        .select({ seatNumber: seats.seatNumber })
+        .from(seats)
+        .where(eq(seats.roomId, roomId));
+      const existSet = new Set(existing.map((x) => x.seatNumber));
+      filtered = seatsToInsert.filter((s) => !existSet.has(s.seatNumber));
+    }
+
+    if (filtered.length > 0) {
+      // batch insert
+      await tx.insert(seats).values(filtered as (typeof seats.$inferInsert)[]);
+    }
+  });
+
+  return { inserted: seatsToInsert.length };
 }

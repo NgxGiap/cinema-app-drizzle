@@ -1,54 +1,88 @@
 import { Router } from 'express';
-import * as c from '../controllers/seat.controller';
+import * as SeatController from '../controllers/seat.controller';
+import {
+  validateSeatListQuery,
+  validateSeatMapParams,
+  validateSeatIdParam,
+  validateSeatCreate,
+  validateSeatCreateMany,
+  validateSeatUpdate,
+  handleValidationErrors,
+} from '../middlewares/validation';
 import { requireAuth, optionalAuth } from '../middlewares/auth';
 import { authorize } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
-import {
-  validateSeatCreation,
-  validatePagination,
-} from '../middlewares/validation';
 
-const r = Router();
+const router = Router();
 
-// Public routes for viewing seats
-r.get('/', optionalAuth, validatePagination, c.listSeats);
-
-r.get(
-  '/cinema/:cinemaId',
+/**
+ * Public routes
+ * - Danh sách ghế theo room (query)
+ * - Seat map (room + showtime)
+ */
+router.get(
+  '/',
   optionalAuth,
-  validatePagination,
-  c.getSeatsByCinema,
+  validateSeatListQuery,
+  handleValidationErrors,
+  SeatController.listSeats,
 );
 
-r.get('/cinema/:cinemaId/map', optionalAuth, c.getSeatMap);
+router.get(
+  '/rooms/:roomId/showtimes/:showtimeId/seat-map',
+  optionalAuth,
+  validateSeatMapParams,
+  handleValidationErrors,
+  SeatController.seatMap,
+);
 
-r.get('/:id', optionalAuth, c.getSeat);
-
-// Protected routes for seat management - Admin/Manager only
-r.post(
+/**
+ * Admin routes
+ */
+router.post(
   '/',
   requireAuth,
   authorize(Permission.MANAGE_SEATS),
-  validateSeatCreation,
-  c.createSeat,
+  validateSeatCreate,
+  handleValidationErrors,
+  SeatController.createSeat,
 );
 
-r.post(
+router.post(
   '/bulk',
   requireAuth,
   authorize(Permission.MANAGE_SEATS),
-  c.createMultipleSeats,
+  validateSeatCreateMany,
+  handleValidationErrors,
+  SeatController.createManySeats,
 );
 
-r.put('/:id', requireAuth, authorize(Permission.MANAGE_SEATS), c.updateSeat);
-
-r.delete('/:id', requireAuth, authorize(Permission.MANAGE_SEATS), c.deleteSeat);
-
-r.delete(
-  '/bulk',
+router.get(
+  '/:id',
   requireAuth,
   authorize(Permission.MANAGE_SEATS),
-  c.deleteMultipleSeats,
+  validateSeatIdParam,
+  handleValidationErrors,
+  SeatController.getSeat,
 );
 
-export default r;
+router.put(
+  '/:id',
+  requireAuth,
+  authorize(Permission.MANAGE_SEATS),
+  validateSeatIdParam,
+  validateSeatUpdate,
+  handleValidationErrors,
+  SeatController.updateSeat,
+);
+
+router.delete(
+  '/:id',
+  requireAuth,
+  authorize(Permission.MANAGE_SEATS),
+  validateSeatIdParam,
+  handleValidationErrors,
+  SeatController.deleteSeat,
+);
+
+export default router;

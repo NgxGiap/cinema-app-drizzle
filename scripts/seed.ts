@@ -3,109 +3,172 @@ import { db } from '../src/db';
 import {
   users,
   movies,
-  seats,
   cinemas,
+  rooms,
+  seats,
   showtimes,
   bookings,
   bookingSeats,
   payments,
+  tickets,
+  MOVIE_STATE,
+  BOOKING_STATUS,
+  PAYMENT_STATUS,
+  TICKET_STATUS,
+  SEAT_TYPE,
 } from '../src/db/schema';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { and, eq, sql, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+
+function uid() {
+  return crypto.randomUUID();
+}
+function bookingNo() {
+  return 'BK' + Math.floor(100000 + Math.random() * 900000);
+}
+function qr() {
+  return crypto.randomBytes(24).toString('hex');
+}
 
 async function seed() {
   try {
-    // await db.delete(users);
-    // await db.delete(movies);
-    // await db.delete(seats);
-    // await db.delete(cinemas);
-    // await db.delete(showtimes);
-    // await db.delete(bookings);
-
-    // Seed Users
-    const hashedAdmin = await bcrypt.hash('123456', 10);
-    const hashedUser = await bcrypt.hash('123456', 10);
-
+    /* USERS */
+    await db.delete(users);
     await db.insert(users).values([
       {
-        name: 'Admin',
-        email: 'admin@example.com',
-        password: hashedAdmin,
-        role: 'admin',
+        id: uid(),
+        name: 'Alice',
+        email: 'alice@example.com',
+        password: await bcrypt.hash('password', 10),
+        role: 'user',
       },
       {
-        name: 'Regular User',
-        email: 'user@example.com',
-        password: hashedUser,
+        id: uid(),
+        name: 'Bob',
+        email: 'bob@example.com',
+        password: await bcrypt.hash('password', 10),
         role: 'user',
       },
     ]);
+    console.log('✅ Users seeded');
 
-    console.log('✅ Users seeded successfully!');
-
-    // Seed Movies
+    /* MOVIES (lean + JSON) */
+    await db.delete(movies);
     await db.insert(movies).values([
       {
+        id: uid(),
+        slug: 'mua-do',
+        title: 'Mưa Đỏ',
+        description: 'Phim chiến tranh lấy cảm hứng từ sự kiện 1972.',
+        runtimeMinutes: 124,
+        releaseDate: new Date('2025-08-22'),
+        state: MOVIE_STATE.NOW_SHOWING,
+        posterUrl: 'https://example.com/posters/mua-do.jpg',
+        trailerUrl: 'https://www.youtube.com/watch?v=dummy1',
+        genres: JSON.stringify(['Hành Động', 'Lịch Sử']),
+        directors: JSON.stringify(['NSƯT Đặng Thái Huyền']),
+        cast: JSON.stringify(['Đỗ Nhật Hoàng', 'Phương Nam', 'Lâm Thanh Nhã']),
+        ratingCode: 'T13',
+        originalLanguage: 'vi',
+      },
+      {
+        id: uid(),
+        slug: 'inception',
         title: 'Inception',
         description:
-          'A thief who steals corporate secrets through dream-sharing technology.',
-        duration: 148,
+          'A thief who steals corporate secrets through dream-sharing tech.',
+        runtimeMinutes: 148,
         releaseDate: new Date('2010-07-16'),
+        state: MOVIE_STATE.NOW_SHOWING,
+        posterUrl: 'https://example.com/posters/inception.jpg',
+        trailerUrl: 'https://www.youtube.com/watch?v=dummy2',
+        genres: JSON.stringify(['Action', 'Sci-Fi']),
+        directors: JSON.stringify(['Christopher Nolan']),
+        cast: JSON.stringify(['Leonardo DiCaprio', 'Joseph Gordon-Levitt']),
+        ratingCode: 'PG-13',
+        originalLanguage: 'en',
       },
       {
+        id: uid(),
+        slug: 'interstellar',
         title: 'Interstellar',
-        description: 'A team of explorers travel through a wormhole in space.',
-        duration: 169,
+        description: 'Explorers travel through a wormhole in space.',
+        runtimeMinutes: 169,
         releaseDate: new Date('2014-11-07'),
-      },
-      {
-        title: 'The Dark Knight',
-        description: 'Batman faces the Joker in Gotham City.',
-        duration: 152,
-        releaseDate: new Date('2008-07-18'),
+        state: MOVIE_STATE.COMING_SOON,
+        posterUrl: 'https://example.com/posters/interstellar.jpg',
+        trailerUrl: 'https://www.youtube.com/watch?v=dummy3',
+        genres: JSON.stringify(['Adventure', 'Drama', 'Sci-Fi']),
+        directors: JSON.stringify(['Christopher Nolan']),
+        cast: JSON.stringify(['Matthew McConaughey', 'Anne Hathaway']),
+        ratingCode: 'PG-13',
+        originalLanguage: 'en',
       },
     ]);
+    console.log('✅ Movies seeded');
 
-    console.log('✅ Movies seeded successfully!');
+    /* CINEMAS */
+    await db.delete(cinemas);
+    const cgv1 = {
+      id: uid(),
+      name: 'CGV Vincom Đồng Khởi',
+      address: '72 Lê Thánh Tôn, Q1',
+      city: 'Hồ Chí Minh',
+      isActive: true,
+    };
+    const cgv2 = {
+      id: uid(),
+      name: 'CGV Aeon Tân Phú',
+      address: '30 Bờ Bao Tân Thắng, Tân Phú',
+      city: 'Hồ Chí Minh',
+      isActive: true,
+    };
+    await db.insert(cinemas).values([cgv1, cgv2]);
+    console.log('✅ Cinemas seeded');
 
-    const cinemaList: (typeof cinemas.$inferInsert)[] = [
+    /* ROOMS */
+    await db.delete(rooms);
+    const roomList = [
       {
-        id: crypto.randomUUID(),
-        name: 'CGV Vincom Đồng Khởi',
-        address: '72 Lê Thánh Tôn, Quận 1',
-        city: 'Hồ Chí Minh',
+        id: uid(),
+        cinemaId: cgv1.id,
+        name: 'Room 1',
+        capacity: 0,
         isActive: true,
       },
       {
-        id: crypto.randomUUID(),
-        name: 'Lotte Cinema Hà Nội Center',
-        address: '54 Liễu Giai, Ba Đình',
-        city: 'Hà Nội',
+        id: uid(),
+        cinemaId: cgv1.id,
+        name: 'Room 2',
+        capacity: 0,
+        isActive: true,
+      },
+      {
+        id: uid(),
+        cinemaId: cgv2.id,
+        name: 'Room A',
+        capacity: 0,
         isActive: true,
       },
     ];
+    await db.insert(rooms).values(roomList);
+    console.log('✅ Rooms seeded');
 
-    await db.insert(cinemas).values(cinemaList);
-    console.log(`✅ Cinemas seeded successfully! (${cinemaList.length})`);
-
-    // ===== Seed Seats (Ghế) cho mỗi rạp =====
-    // 5 hàng (A–E) x 10 ghế/hàng. Cột 1–2: VIP (120k), còn lại Regular (80k)
-    const allSeats: (typeof seats.$inferInsert)[] = [];
-    const rows = ['A', 'B', 'C', 'D', 'E'];
-
-    for (const c of cinemaList) {
-      for (const r of rows) {
+    /* SEATS (generate simple 5x10 per room: A-E × 1..10; VIP: col 1-2) */
+    await db.delete(seats);
+    const seatInserts: (typeof seats.$inferInsert)[] = [];
+    const rowsAZ = ['A', 'B', 'C', 'D', 'E'];
+    for (const r of roomList) {
+      for (const row of rowsAZ) {
         for (let col = 1; col <= 10; col++) {
-          const type = col <= 2 ? 'vip' : 'regular';
-          // Nếu cột price trong schema là string (như hiện tại), để String(...)
+          const type = col <= 2 ? SEAT_TYPE.VIP : SEAT_TYPE.REGULAR;
           const price = String(col <= 2 ? 120_000 : 80_000);
-
-          allSeats.push({
-            id: crypto.randomUUID(),
-            cinemaId: c.id!,
-            seatNumber: `${r}${col}`,
-            row: r,
+          seatInserts.push({
+            id: uid(),
+            roomId: r.id!,
+            seatNumber: `${row}${col}`,
+            row,
             column: col,
             type,
             price,
@@ -114,283 +177,230 @@ async function seed() {
         }
       }
     }
+    await db.insert(seats).values(seatInserts);
+    console.log(`✅ Seats seeded (${seatInserts.length})`);
 
-    await db.insert(seats).values(allSeats);
-    console.log(`✅ Seats seeded successfully! (${allSeats.length})`);
+    /* SHOWTIMES (2 phim / room, mỗi phim 3 suất khác giờ) */
+    await db.delete(showtimes);
+    const movieRows = await db.select().from(movies);
+    const showtimeInserts: (typeof showtimes.$inferInsert)[] = [];
+    const startBase = new Date();
+    startBase.setMinutes(0, 0, 0);
 
-    const today = new Date();
-    const showtimeList: (typeof showtimes.$inferInsert)[] = [];
-
-    // Lấy movies và cinemas đã tạo
-    const movieList = await db.select().from(movies);
-
-    // Tạo lịch chiếu cho 7 ngày tới
-    const times = ['09:00:00', '12:00:00', '15:00:00', '18:00:00', '21:00:00'];
-
-    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
-      const currentDate = new Date(today);
-      currentDate.setDate(today.getDate() + dayOffset);
-
-      for (const movie of movieList) {
-        for (const cinema of cinemaList) {
-          // Random 2-4 suất chiếu mỗi ngày cho mỗi phim tại mỗi rạp
-          const numShowtimes = Math.floor(Math.random() * 3) + 2;
-          const selectedTimes = times
-            .sort(() => 0.5 - Math.random())
-            .slice(0, numShowtimes);
-
-          for (const time of selectedTimes) {
-            // Skip past showtimes for today
-            if (dayOffset === 0) {
-              const now = new Date();
-              const showtimeDateTime = new Date(
-                `${currentDate.toISOString().split('T')[0]} ${time}`,
-              );
-              if (showtimeDateTime < now) {
-                continue;
-              }
-            }
-
-            showtimeList.push({
-              id: crypto.randomUUID(),
-              movieId: movie.id,
-              cinemaId: cinema.id!,
-              showDate: currentDate,
-              showTime: time,
-              price: String(90000 + Math.floor(Math.random() * 50000)), // 90k-140k VND
-              totalSeats: 50, // Will be updated later
-              bookedSeats: Math.floor(Math.random() * 15), // Random 0-14 booked seats
-              isActive: true,
-            });
-          }
-        }
-      }
+    function at(d: Date, h: number, m = 0) {
+      const t = new Date(d);
+      t.setHours(h, m, 0, 0);
+      return t;
     }
 
-    if (showtimeList.length > 0) {
-      await db.insert(showtimes).values(showtimeList);
+    // giờ chiếu cơ bản
+    const baseSlots = [10, 14, 19]; // giờ 10h, 14h, 19h30
+    for (const r of roomList) {
+      const cin = [cgv1, cgv2].find((c) => c.id === r.cinemaId)!;
 
-      // Cập nhật totalSeats từ seats table
-      console.log('✅ Updating total seats for showtimes...');
-      for (const showtime of showtimeList) {
-        const [seatCount] = await db
-          .select({ count: sql<number>`count(*)` })
-          .from(seats)
-          .where(
-            and(
-              eq(seats.cinemaId, showtime.cinemaId),
-              eq(seats.isActive, true),
-            ),
-          );
+      movieRows.slice(0, 2).forEach((mv, i) => {
+        const d1 = new Date(startBase);
+        d1.setDate(d1.getDate() + 1);
+        const d2 = new Date(startBase);
+        d2.setDate(d2.getDate() + 2);
 
-        await db
-          .update(showtimes)
-          .set({ totalSeats: Number(seatCount.count) })
-          .where(eq(showtimes.id, showtime.id!));
-      }
-
-      console.log(`✅ Showtimes seeded successfully! (${showtimeList.length})`);
+        showtimeInserts.push(
+          {
+            id: uid(),
+            movieId: mv.id!,
+            cinemaId: cin.id!,
+            roomId: r.id!,
+            startsAt: at(d1, baseSlots[0] + i * 3), // phim 1: 10h, phim 2: 13h
+            price: '90000.00',
+            totalSeats: 50,
+            bookedSeats: 0,
+            isActive: true,
+          },
+          {
+            id: uid(),
+            movieId: mv.id!,
+            cinemaId: cin.id!,
+            roomId: r.id!,
+            startsAt: at(d1, baseSlots[1] + i * 3), // phim 1: 14h, phim 2: 17h
+            price: '90000.00',
+            totalSeats: 50,
+            bookedSeats: 0,
+            isActive: true,
+          },
+          {
+            id: uid(),
+            movieId: mv.id!,
+            cinemaId: cin.id!,
+            roomId: r.id!,
+            startsAt: at(d2, baseSlots[2] + i * 3, 30), // phim 1: 19h30, phim 2: 22h30
+            price: '100000.00',
+            totalSeats: 50,
+            bookedSeats: 0,
+            isActive: true,
+          },
+        );
+      });
     }
 
-    async function seedBookings() {
-      console.log('⏳ Seeding bookings...');
+    await db.insert(showtimes).values(showtimeInserts);
+    console.log(`✅ Showtimes seeded (${showtimeInserts.length})`);
 
-      // Lấy 2 user để làm người đặt mẫu
-      const userList = await db
-        .select({ id: users.id, email: users.email, name: users.name })
-        .from(users)
-        .limit(2);
+    /* BOOKINGS (+ booking_seats, payments, tickets) */
+    await db.delete(bookings);
+    await db.delete(bookingSeats);
+    await db.delete(payments);
+    await db.delete(tickets);
 
-      if (userList.length === 0) {
-        console.log('⚠️  No users to create bookings for. Skipped.');
-        return;
-      }
-      const userA = userList[0];
-      const userB = userList[userList.length > 1 ? 1 : 0];
+    const [u1, u2] = await db.select().from(users).limit(2);
+    const futureShow = await db
+      .select({
+        id: showtimes.id,
+        roomId: showtimes.roomId,
+        startsAt: showtimes.startsAt,
+        price: showtimes.price,
+      })
+      .from(showtimes)
+      .limit(3);
 
-      // Chọn một số showtime tương lai & đang active
-      const futureShowtimes = await db
-        .select({
-          id: showtimes.id,
-          cinemaId: showtimes.cinemaId,
-          showDate: showtimes.showDate,
-          showTime: showtimes.showTime,
-          price: showtimes.price,
-          isActive: showtimes.isActive,
-          bookedSeats: showtimes.bookedSeats,
-          totalSeats: showtimes.totalSeats,
+    // pick some seats of first showtime
+    const st = futureShow[0];
+    const someSeats = await db
+      .select({ id: seats.id, price: seats.price })
+      .from(seats)
+      .where(
+        and(
+          eq(seats.roomId, st.roomId),
+          inArray(seats.seatNumber, ['A1', 'A2', 'B3', 'B4']),
+        ),
+      );
+
+    // Booking 1: CONFIRMED + PAID
+    const b1 = {
+      id: uid(),
+      bookingNumber: bookingNo(),
+      userId: u1?.id,
+      showtimeId: st.id!,
+      status: BOOKING_STATUS.CONFIRMED,
+      paymentStatus: PAYMENT_STATUS.PAID,
+      expiresAt: null,
+      confirmedAt: new Date(),
+      currency: 'VND',
+      subtotalAmount: someSeats
+        .reduce((s, x) => s + Number(x.price), 0)
+        .toFixed(2),
+      discountAmount: '0.00',
+      taxAmount: '0.00',
+      feeAmount: '0.00',
+      totalAmount: someSeats
+        .reduce((s, x) => s + Number(x.price), 0)
+        .toFixed(2),
+      notes: 'seed: confirmed & paid',
+    } as const;
+
+    await db.transaction(async (tx) => {
+      await tx.insert(bookings).values(b1);
+
+      // composite PK: (showtime_id, seat_id)
+      await tx.insert(bookingSeats).values(
+        someSeats.map((s) => ({
+          bookingId: b1.id,
+          showtimeId: b1.showtimeId,
+          seatId: s.id!,
+          unitPrice: String(s.price),
+        })),
+      );
+
+      // increment bookedSeats
+      await tx
+        .update(showtimes)
+        .set({
+          bookedSeats: sql`${showtimes.bookedSeats} + ${someSeats.length}`,
         })
-        .from(showtimes)
-        .where(
-          and(
-            eq(showtimes.isActive, true),
-            sql`TIMESTAMP(${showtimes.showDate}, ${showtimes.showTime}) > NOW()`,
-          ),
-        )
-        .limit(6);
+        .where(eq(showtimes.id, b1.showtimeId));
 
-      if (futureShowtimes.length === 0) {
-        console.log('⚠️  No future showtimes found. Skipped.');
-        return;
-      }
+      // payment + tickets
+      await tx.insert(payments).values({
+        id: uid(),
+        bookingId: b1.id,
+        amount: b1.totalAmount,
+        currency: 'VND',
+        method: 'CASH',
+        status: PAYMENT_STATUS.PAID,
+        transactionId: 'SEED-TX-' + Math.floor(Math.random() * 1e6),
+        processedAt: new Date(),
+      });
 
-      const genBookingNumber = () =>
-        'BK' +
-        Date.now().toString().slice(-6) +
-        Math.random().toString(36).slice(2, 6).toUpperCase();
+      await tx.insert(tickets).values(
+        someSeats.map((s) => ({
+          id: uid(),
+          bookingId: b1.id,
+          showtimeId: b1.showtimeId,
+          seatId: s.id!,
+          status: TICKET_STATUS.ISSUED,
+          qrToken: qr(),
+          issuedAt: new Date(),
+          version: 1,
+        })),
+      );
+    });
 
-      let created = 0;
+    // Booking 2: PENDING (holding)
+    const st2 = futureShow[1];
+    const holdSeats = await db
+      .select({ id: seats.id, price: seats.price })
+      .from(seats)
+      .where(
+        and(
+          eq(seats.roomId, st2.roomId),
+          inArray(seats.seatNumber, ['C5', 'C6']),
+        ),
+      );
 
-      for (const st of futureShowtimes) {
-        // Ghế đã bị giữ/đặt
-        const taken = await db
-          .select({ seatId: bookingSeats.seatId })
-          .from(bookingSeats)
-          .leftJoin(bookings, eq(bookingSeats.bookingId, bookings.id))
-          .where(
-            and(
-              eq(bookings.showtimeId, st.id!),
-              inArray(bookings.status, ['pending', 'confirmed']),
-              inArray(bookingSeats.status, ['reserved', 'booked']),
-            ),
-          );
-        const takenSet = new Set(taken.map((t) => t.seatId));
+    const b2 = {
+      id: uid(),
+      bookingNumber: bookingNo(),
+      userId: u2?.id,
+      showtimeId: st2.id!,
+      status: BOOKING_STATUS.PENDING,
+      paymentStatus: PAYMENT_STATUS.PENDING,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      currency: 'VND',
+      subtotalAmount: holdSeats
+        .reduce((s, x) => s + Number(x.price), 0)
+        .toFixed(2),
+      discountAmount: '0.00',
+      taxAmount: '0.00',
+      feeAmount: '0.00',
+      totalAmount: holdSeats
+        .reduce((s, x) => s + Number(x.price), 0)
+        .toFixed(2),
+      notes: 'seed: pending (holding seats)',
+    } as const;
 
-        // Ghế còn trống của rạp
-        const seatPool = await db
-          .select({ id: seats.id, price: seats.price })
-          .from(seats)
-          .where(
-            and(eq(seats.cinemaId, st.cinemaId!), eq(seats.isActive, true)),
-          );
-        const freeSeats = seatPool.filter((s) => !takenSet.has(s.id));
-        if (freeSeats.length < 1) continue;
+    await db.transaction(async (tx) => {
+      await tx.insert(bookings).values(b2);
 
-        const remainingCapacity =
-          (st.totalSeats ?? freeSeats.length) - (st.bookedSeats ?? 0);
-        if (remainingCapacity <= 0) continue;
+      await tx.insert(bookingSeats).values(
+        holdSeats.map((s) => ({
+          bookingId: b2.id,
+          showtimeId: b2.showtimeId,
+          seatId: s.id!,
+          unitPrice: String(s.price),
+        })),
+      );
 
-        // --- Booking 1: confirmed + paid (2 ghế nếu đủ) ---
-        const pick1Count = Math.min(2, remainingCapacity, freeSeats.length);
-        if (pick1Count > 0) {
-          const pick1 = freeSeats.slice(0, pick1Count);
-          const total1 = pick1.reduce((sum, s) => sum + Number(s.price), 0);
-          const bookingNumber1 = genBookingNumber();
+      await tx
+        .update(showtimes)
+        .set({
+          bookedSeats: sql`${showtimes.bookedSeats} + ${holdSeats.length}`,
+        })
+        .where(eq(showtimes.id, b2.showtimeId));
+    });
 
-          await db.transaction(async (tx) => {
-            const b1Id = crypto.randomUUID();
-
-            await tx.insert(bookings).values({
-              id: b1Id,
-              userId: userA.id!,
-              showtimeId: st.id!,
-              bookingNumber: bookingNumber1,
-              totalAmount: total1.toFixed(2),
-              totalSeats: pick1.length,
-              status: 'confirmed',
-              paymentStatus: 'paid',
-              paymentMethod: 'cash',
-              customerName: userA.name || 'Seed User A',
-              customerEmail: userA.email!,
-              customerPhone: null,
-              notes: 'seed: confirmed paid',
-              confirmedAt: new Date(),
-            });
-
-            await tx.insert(bookingSeats).values(
-              pick1.map((s) => ({
-                id: crypto.randomUUID(),
-                bookingId: b1Id,
-                showtimeId: st.id!, // BẮT BUỘC: schema yêu cầu
-                seatId: s.id!,
-                price: Number(s.price).toFixed(2),
-                status: 'booked' as const,
-              })),
-            );
-
-            await tx
-              .update(showtimes)
-              .set({
-                bookedSeats: sql`${showtimes.bookedSeats} + ${pick1.length}`,
-              })
-              .where(eq(showtimes.id, st.id!));
-
-            await tx.insert(payments).values({
-              id: crypto.randomUUID(),
-              bookingId: b1Id,
-              amount: total1.toFixed(2),
-              method: 'cash',
-              status: 'completed',
-              transactionId: null,
-              processedAt: new Date(),
-            });
-          });
-
-          created++;
-        }
-
-        // --- Booking 2: pending (1 ghế) ---
-        const freeAfter1 = freeSeats.slice(pick1Count);
-        const capacityAfter1 =
-          (st.totalSeats ?? 9999) - (st.bookedSeats ?? 0) - pick1Count;
-
-        if (freeAfter1.length >= 1 && capacityAfter1 > 0) {
-          const pick2 = freeAfter1.slice(0, 1);
-          const total2 = pick2.reduce((sum, s) => sum + Number(s.price), 0);
-          const bookingNumber2 = genBookingNumber();
-          const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-          await db.transaction(async (tx) => {
-            const b2Id = crypto.randomUUID();
-
-            await tx.insert(bookings).values({
-              id: b2Id,
-              userId: userB.id!,
-              showtimeId: st.id!,
-              bookingNumber: bookingNumber2,
-              totalAmount: total2.toFixed(2),
-              totalSeats: pick2.length,
-              status: 'pending',
-              paymentStatus: 'pending',
-              paymentMethod: null,
-              customerName: userB.name || 'Seed User B',
-              customerEmail: userB.email!,
-              customerPhone: null,
-              notes: 'seed: pending hold',
-              expiresAt,
-            });
-
-            await tx.insert(bookingSeats).values(
-              pick2.map((s) => ({
-                id: crypto.randomUUID(),
-                bookingId: b2Id,
-                showtimeId: st.id!, // BẮT BUỘC: schema yêu cầu
-                seatId: s.id!,
-                price: Number(s.price).toFixed(2),
-                status: 'reserved' as const,
-              })),
-            );
-
-            await tx
-              .update(showtimes)
-              .set({
-                bookedSeats: sql`${showtimes.bookedSeats} + ${pick2.length}`,
-              })
-              .where(eq(showtimes.id, st.id!));
-          });
-
-          created++;
-        }
-      }
-
-      console.log(`✅ Bookings seeded: ${created}`);
-    }
-
-    await seedBookings();
-
+    console.log('✅ Bookings/Payments/Tickets seeded');
     process.exit(0);
-  } catch (error) {
-    console.error('❌ Error seeding data:', error);
+  } catch (err) {
+    console.error('❌ Seed error:', err);
     process.exit(1);
   }
 }

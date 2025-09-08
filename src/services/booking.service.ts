@@ -1,806 +1,619 @@
+// src/services/booking.service.ts
 import { randomUUID } from 'crypto';
-import { and, eq, count, sql, inArray, gte, lte } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
   bookings,
   bookingSeats,
-  payments,
-  showtimes,
+  bookingSeatHolds, // <— bảng tạm HOLD
   seats,
+  showtimes,
   movies,
   cinemas,
-  users,
+  rooms,
+  BOOKING_STATUS,
+  PAYMENT_STATUS,
 } from '../db/schema';
 import {
-  NotFoundError,
+  BadRequestError,
   ConflictError,
-  ValidationError,
+  NotFoundError,
 } from '../utils/errors/base';
 
-export type CreateBookingInput = {
-  userId: string;
+// ====== Cấu hình HOLD ======
+const HOLD_MINUTES = 5 as const;
+
+// ====== Kiểu dữ liệu public cho service ======
+export type HoldSeatsInput = {
+  userId?: string;
   showtimeId: string;
-  seatIds: string[];
-  customerName: string;
-  customerEmail: string;
-  customerPhone?: string;
-  notes?: string;
+  seatIds: string[]; // chỉ seatId, KHÔNG truyền giá
+};
+
+export type HoldItem = {
+  seatId: string;
+  seatNumber: string;
+  row: string;
+  column: number;
+};
+
+export type HoldSeatsResult = {
+  bookingId: string;
+  bookingNumber: string;
+  status: (typeof bookings.$inferSelect)['status'];
+  expiresAt: Date;
+  items: HoldItem[];
+};
+
+export type BookingSeatEntry = {
+  seatId: string;
+  seatNumber: string;
+  row: string;
+  column: number;
+  unitPrice: string | null; // null nếu đang hold (chưa chốt giá)
+  source: 'booked' | 'hold';
+};
+
+export type BookingListItem = {
+  id: string;
+  bookingNumber: string;
+  status: (typeof bookings.$inferSelect)['status'];
+  paymentStatus: (typeof bookings.$inferSelect)['paymentStatus'];
+  currency: string;
+  subtotalAmount: string;
+  totalAmount: string;
+  expiresAt: Date | null;
+  confirmedAt: Date | null;
+  cancelledAt: Date | null;
+  createdAt: Date;
+  showtime: {
+    id: string;
+    startsAt: Date;
+    price: string; // reference price từ showtime
+    movie: { id: string; title: string; posterUrl: string | null };
+    cinema: { id: string; name: string; city: string | null };
+    room: { id: string; name: string };
+  };
+  seats: BookingSeatEntry[];
 };
 
 export type BookingFilters = {
   userId?: string;
+  status?: (typeof bookings.$inferSelect)['status'];
+  paymentStatus?: (typeof bookings.$inferSelect)['paymentStatus'];
   showtimeId?: string;
-  movieId?: string;
-  cinemaId?: string;
-  status?: 'pending' | 'confirmed' | 'cancelled' | 'expired';
-  paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
-  fromDate?: string;
-  toDate?: string;
-  bookingNumber?: string;
 };
 
-export type BookingStatus = 'pending' | 'confirmed' | 'cancelled' | 'expired';
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
-
-const BOOKING_EXPIRY_MINUTES = 15; // Bookings expire after 15 minutes if not confirmed
-
-// Generate unique booking number
-function generateBookingNumber(): string {
-  const date = new Date();
-  const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-  const timeStr = Date.now().toString().slice(-6);
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `BK${dateStr}${timeStr}${random}`;
+// ====== Helpers ======
+async function nextBookingNumber(): Promise<string> {
+  // Tuỳ bạn thay bằng sequence/format riêng
+  return 'BK' + Date.now();
 }
 
-export async function createBooking(input: CreateBookingInput) {
-  if (!input.seatIds || input.seatIds.length === 0) {
-    throw new ValidationError('At least one seat must be selected');
+// ====== CLEANUP holds hết hạn ======
+export async function cleanupExpiredHolds(): Promise<void> {
+  await db
+    .delete(bookingSeatHolds)
+    .where(lt(bookingSeatHolds.expiresAt, new Date()));
+}
+
+// ====== HOLD ghế 5 phút — KHÔNG dính giá ======
+export async function holdSeats(
+  input: HoldSeatsInput,
+): Promise<HoldSeatsResult> {
+  if (!input.showtimeId) throw new BadRequestError('showtimeId is required');
+  if (!Array.isArray(input.seatIds) || input.seatIds.length === 0) {
+    throw new BadRequestError('seatIds is required');
   }
 
-  // Dedup ghế trong 1 booking
-  input.seatIds = Array.from(new Set(input.seatIds));
+  return db.transaction(async (tx) => {
+    // 1) dọn rác trước khi hold để tránh vướng unique
+    await tx
+      .delete(bookingSeatHolds)
+      .where(lt(bookingSeatHolds.expiresAt, new Date()));
 
-  if (input.seatIds.length > 8) {
-    throw new ValidationError('Maximum 8 seats allowed per booking');
-  }
+    // 2) showtime hợp lệ & active
+    const [st] = await tx
+      .select({
+        id: showtimes.id,
+        roomId: showtimes.roomId,
+        isActive: showtimes.isActive,
+      })
+      .from(showtimes)
+      .where(eq(showtimes.id, input.showtimeId))
+      .limit(1);
 
-  // Check if showtime exists and is active
-  const [showtime] = await db
-    .select({
-      id: showtimes.id,
-      movieId: showtimes.movieId,
-      cinemaId: showtimes.cinemaId,
-      showDate: showtimes.showDate,
-      showTime: showtimes.showTime,
-      price: showtimes.price,
-      totalSeats: showtimes.totalSeats,
-      bookedSeats: showtimes.bookedSeats,
-      isActive: showtimes.isActive,
-      movie: {
-        id: movies.id,
-        title: movies.title,
-        duration: movies.duration,
-      },
-      cinema: {
-        id: cinemas.id,
-        name: cinemas.name,
-        city: cinemas.city,
-      },
-    })
-    .from(showtimes)
-    .leftJoin(movies, eq(showtimes.movieId, movies.id))
-    .leftJoin(cinemas, eq(showtimes.cinemaId, cinemas.id))
-    .where(eq(showtimes.id, input.showtimeId))
-    .limit(1);
+    if (!st || !st.isActive)
+      throw new BadRequestError('Showtime not found or inactive');
 
-  if (!showtime) {
-    throw new NotFoundError('Showtime not found');
-  }
-
-  if (!showtime.isActive) {
-    throw new ValidationError('Showtime is not active');
-  }
-
-  // Check not in the past
-  const now = new Date();
-  const showtimeDateTime = new Date(
-    `${showtime.showDate.toISOString().split('T')[0]} ${showtime.showTime}`,
-  );
-  if (showtimeDateTime < now) {
-    throw new ValidationError('Cannot book seats for past showtimes');
-  }
-
-  // Check user exists
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.id, input.userId))
-    .limit(1);
-  if (!user) {
-    throw new NotFoundError('User not found');
-  }
-
-  // Get seat details (đúng rạp + active)
-  const seatDetails = await db
-    .select({
-      id: seats.id,
-      cinemaId: seats.cinemaId,
-      seatNumber: seats.seatNumber,
-      row: seats.row,
-      column: seats.column,
-      type: seats.type,
-      price: seats.price,
-      isActive: seats.isActive,
-    })
-    .from(seats)
-    .where(
-      and(
-        inArray(seats.id, input.seatIds),
-        eq(seats.cinemaId, showtime.cinemaId),
-        eq(seats.isActive, true),
-      ),
-    );
-
-  if (seatDetails.length !== input.seatIds.length) {
-    throw new ValidationError('Some seats are invalid or inactive');
-  }
-
-  // Pre-check seats are free (bên ngoài tx – để feedback sớm)
-  const bookedSeats = await db
-    .select({ seatId: bookingSeats.seatId })
-    .from(bookingSeats)
-    .leftJoin(bookings, eq(bookingSeats.bookingId, bookings.id))
-    .where(
-      and(
-        eq(bookings.showtimeId, input.showtimeId),
-        inArray(bookingSeats.seatId, input.seatIds),
-        inArray(bookings.status, ['pending', 'confirmed']),
-        inArray(bookingSeats.status, ['reserved', 'booked']),
-      ),
-    );
-
-  if (bookedSeats.length > 0) {
-    throw new ConflictError('Some seats are already booked or reserved');
-  }
-
-  // Calculate total amount
-  const totalAmount = seatDetails.reduce((sum, seat) => {
-    return sum + parseFloat(seat.price.toString());
-  }, 0);
-
-  // Create booking in transaction
-  const bookingId = randomUUID();
-  const bookingNumber = generateBookingNumber();
-  const expiresAt = new Date(Date.now() + BOOKING_EXPIRY_MINUTES * 60 * 1000);
-
-  await db.transaction(async (tx) => {
-    // 🔒 Lock 1 hàng showtime để serialize và tránh race
-    await tx.execute(
-      sql`SELECT id FROM ${showtimes} WHERE ${showtimes.id} = ${input.showtimeId} FOR UPDATE`,
-    );
-
-    // 🔁 Re-check seats NGAY TRONG transaction (chống đua)
-    const conflictingSeatsTx = await tx
-      .select({ seatId: bookingSeats.seatId })
-      .from(bookingSeats)
-      .leftJoin(bookings, eq(bookingSeats.bookingId, bookings.id))
+    // 3) seats thuộc room & active
+    const validSeats = await tx
+      .select({
+        id: seats.id,
+        seatNumber: seats.seatNumber,
+        row: seats.row,
+        column: seats.column,
+      })
+      .from(seats)
       .where(
         and(
-          eq(bookings.showtimeId, input.showtimeId),
-          inArray(bookingSeats.seatId, input.seatIds),
-          inArray(bookings.status, ['pending', 'confirmed']),
-          inArray(bookingSeats.status, ['reserved', 'booked']),
+          inArray(seats.id, input.seatIds),
+          eq(seats.roomId, st.roomId),
+          eq(seats.isActive, true),
         ),
       );
 
-    if (conflictingSeatsTx.length > 0) {
-      throw new ConflictError('Some seats are already booked or reserved');
+    if (validSeats.length !== input.seatIds.length) {
+      throw new BadRequestError(
+        'Some seats are invalid for this room or inactive',
+      );
     }
 
-    // Create booking
+    // 4) ghế đã BOOKED (bảng chính)
+    const booked = await tx
+      .select({ seatId: bookingSeats.seatId })
+      .from(bookingSeats)
+      .where(
+        and(
+          eq(bookingSeats.showtimeId, input.showtimeId),
+          inArray(bookingSeats.seatId, input.seatIds),
+        ),
+      );
+
+    if (booked.length > 0) throw new ConflictError('Some seats already booked');
+
+    // 5) ghế đang HOLD (bảng tạm, còn sống)
+    const live = await tx
+      .select({ seatId: bookingSeatHolds.seatId })
+      .from(bookingSeatHolds)
+      .where(
+        and(
+          eq(bookingSeatHolds.showtimeId, input.showtimeId),
+          inArray(bookingSeatHolds.seatId, input.seatIds),
+          gt(bookingSeatHolds.expiresAt, new Date()),
+        ),
+      );
+
+    if (live.length > 0) throw new ConflictError('Some seats currently held');
+
+    // 6) tạo booking header (chưa tính tiền)
+    const bookingId = randomUUID();
+    const bookingNumber = await nextBookingNumber();
+    const expiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000);
+
     await tx.insert(bookings).values({
       id: bookingId,
-      userId: input.userId,
-      showtimeId: input.showtimeId,
       bookingNumber,
-      totalAmount: totalAmount.toString(),
-      totalSeats: input.seatIds.length,
-      status: 'pending',
-      paymentStatus: 'pending',
-      customerName: input.customerName,
-      customerEmail: input.customerEmail,
-      customerPhone: input.customerPhone ?? null, // tránh undefined
-      notes: input.notes ?? null, // tránh undefined
+      userId: input.userId ?? null,
+      showtimeId: input.showtimeId,
+      status: BOOKING_STATUS.PENDING,
+      paymentStatus: PAYMENT_STATUS.PENDING,
       expiresAt,
+      currency: 'VND',
+      subtotalAmount: '0.00',
+      discountAmount: '0.00',
+      taxAmount: '0.00',
+      feeAmount: '0.00',
+      totalAmount: '0.00',
     });
 
-    // Create booking seats
-    const bookingSeatData = seatDetails.map((seat) => ({
-      id: randomUUID(),
-      bookingId,
-      showtimeId: input.showtimeId, // nếu bảng booking_seats có cột này
-      seatId: seat.id,
-      price: seat.price.toString(),
-      status: 'reserved' as const,
+    // 7) ghi HOLD vào bảng tạm
+    await tx.insert(bookingSeatHolds).values(
+      validSeats.map((s) => ({
+        id: randomUUID(),
+        bookingId,
+        showtimeId: input.showtimeId,
+        seatId: s.id,
+        expiresAt,
+      })),
+    );
+
+    // 8) trả info hiển thị
+    const items: HoldItem[] = validSeats.map((s) => ({
+      seatId: s.id,
+      seatNumber: s.seatNumber,
+      row: s.row,
+      column: Number(s.column),
     }));
 
-    await tx.insert(bookingSeats).values(bookingSeatData);
-
-    // Update showtime booked seats count
-    await tx
-      .update(showtimes)
-      .set({
-        bookedSeats: sql`${showtimes.bookedSeats} + ${input.seatIds.length}`,
-      })
-      .where(eq(showtimes.id, input.showtimeId));
+    return {
+      bookingId,
+      bookingNumber,
+      status: BOOKING_STATUS.PENDING,
+      expiresAt,
+      items,
+    };
   });
-
-  return await getBookingById(bookingId);
 }
 
-export async function getBookingById(id: string) {
-  const [booking] = await db
+// ====== CANCEL booking: xoá HOLD tạm + set trạng thái ======
+export async function cancel(
+  bookingId: string,
+): Promise<{ id: string; status: (typeof bookings.$inferSelect)['status'] }> {
+  return db.transaction(async (tx) => {
+    const [b] = await tx
+      .select()
+      .from(bookings)
+      .where(eq(bookings.id, bookingId))
+      .limit(1);
+    if (!b) throw new NotFoundError('Booking not found');
+
+    await tx
+      .delete(bookingSeatHolds)
+      .where(eq(bookingSeatHolds.bookingId, bookingId));
+    await tx
+      .update(bookings)
+      .set({ status: BOOKING_STATUS.CANCELLED, cancelledAt: new Date() })
+      .where(eq(bookings.id, bookingId));
+
+    return { id: bookingId, status: BOOKING_STATUS.CANCELLED };
+  });
+}
+
+// ====== FINALIZE sau PAID: chuyển HOLD → bảng chính, xoá HOLD, tăng bookedSeats, CONFIRM booking ======
+export async function finalizeBookingSeats(
+  bookingId: string,
+  unitPricePerSeat?: Record<string, string>, // nếu có pricing, truyền { seatId: "xxxxx.yy" }
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [b] = await tx
+      .select({
+        id: bookings.id,
+        showtimeId: bookings.showtimeId,
+        status: bookings.status,
+        paymentStatus: bookings.paymentStatus,
+      })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId))
+      .limit(1);
+
+    if (!b) throw new NotFoundError('Booking not found');
+
+    // holds còn sống
+    const holds = await tx
+      .select({ seatId: bookingSeatHolds.seatId })
+      .from(bookingSeatHolds)
+      .where(
+        and(
+          eq(bookingSeatHolds.bookingId, bookingId),
+          gt(bookingSeatHolds.expiresAt, new Date()),
+        ),
+      );
+
+    if (holds.length === 0) {
+      // idempotent: nếu đã insert booking_seats trước đó thì bỏ qua
+      const already = await tx
+        .select({ n: sql<number>`COUNT(*)` })
+        .from(bookingSeats)
+        .where(eq(bookingSeats.bookingId, bookingId));
+      if (Number(already[0]?.n ?? 0) > 0) return;
+      throw new ConflictError('No valid holds to finalize');
+    }
+
+    // fallback: đơn giá theo showtime nếu chưa có pricing
+    const [st] = await tx
+      .select({ price: showtimes.price })
+      .from(showtimes)
+      .where(eq(showtimes.id, b.showtimeId))
+      .limit(1);
+    const defaultUnit = String(st?.price ?? '0.00');
+
+    // chèn booking_seats (idempotent với composite key)
+    await tx
+      .insert(bookingSeats)
+      .values(
+        holds.map((h) => ({
+          bookingId,
+          showtimeId: b.showtimeId,
+          seatId: h.seatId,
+          unitPrice: unitPricePerSeat?.[h.seatId] ?? defaultUnit,
+        })),
+      )
+      .onDuplicateKeyUpdate({
+        set: { unitPrice: sql`VALUES(unit_price)` },
+      });
+
+    // xoá hold tạm
+    await tx
+      .delete(bookingSeatHolds)
+      .where(eq(bookingSeatHolds.bookingId, bookingId));
+
+    // tăng showtimes.booked_seats
+    await tx
+      .update(showtimes)
+      .set({ bookedSeats: sql`${showtimes.bookedSeats} + ${holds.length}` })
+      .where(eq(showtimes.id, b.showtimeId));
+
+    // xác nhận booking
+    await tx
+      .update(bookings)
+      .set({
+        status: BOOKING_STATUS.CONFIRMED,
+        paymentStatus: PAYMENT_STATUS.PAID,
+        confirmedAt: new Date(),
+      })
+      .where(eq(bookings.id, bookingId));
+  });
+}
+
+// ====== LIST bookings (trả object có ý nghĩa cho UI) ======
+export async function list(
+  page = 1,
+  pageSize = 20,
+  filters?: BookingFilters,
+): Promise<{ items: BookingListItem[]; total: number }> {
+  const offset = (page - 1) * pageSize;
+
+  const where = and(
+    filters?.userId ? eq(bookings.userId, filters.userId) : undefined,
+    filters?.status ? eq(bookings.status, filters.status) : undefined,
+    filters?.paymentStatus
+      ? eq(bookings.paymentStatus, filters.paymentStatus)
+      : undefined,
+    filters?.showtimeId
+      ? eq(bookings.showtimeId, filters.showtimeId)
+      : undefined,
+  );
+
+  // FLAT SELECT + INNER JOIN để loại khả năng null
+  const base = await db
     .select({
       id: bookings.id,
-      userId: bookings.userId,
-      showtimeId: bookings.showtimeId,
       bookingNumber: bookings.bookingNumber,
-      totalAmount: bookings.totalAmount,
-      totalSeats: bookings.totalSeats,
       status: bookings.status,
       paymentStatus: bookings.paymentStatus,
-      paymentMethod: bookings.paymentMethod,
-      customerName: bookings.customerName,
-      customerEmail: bookings.customerEmail,
-      customerPhone: bookings.customerPhone,
-      notes: bookings.notes,
+      currency: bookings.currency,
+      subtotalAmount: bookings.subtotalAmount,
+      totalAmount: bookings.totalAmount,
       expiresAt: bookings.expiresAt,
       confirmedAt: bookings.confirmedAt,
       cancelledAt: bookings.cancelledAt,
       createdAt: bookings.createdAt,
-      updatedAt: bookings.updatedAt,
-      // User info
-      user: {
-        id: users.id,
-        name: users.name,
-        email: users.email,
-      },
-      // Showtime info
-      showtime: {
-        id: showtimes.id,
-        showDate: showtimes.showDate,
-        showTime: showtimes.showTime,
-        price: showtimes.price,
-      },
-      // Movie info
-      movie: {
-        id: movies.id,
-        title: movies.title,
-        duration: movies.duration,
-      },
-      // Cinema info
-      cinema: {
-        id: cinemas.id,
-        name: cinemas.name,
-        city: cinemas.city,
-        address: cinemas.address,
-      },
+
+      st_id: showtimes.id,
+      st_startsAt: showtimes.startsAt,
+      st_price: showtimes.price,
+
+      mv_id: movies.id,
+      mv_title: movies.title,
+      mv_posterUrl: movies.posterUrl,
+
+      cn_id: cinemas.id,
+      cn_name: cinemas.name,
+      cn_city: cinemas.city,
+
+      rm_id: rooms.id,
+      rm_name: rooms.name,
     })
     .from(bookings)
-    .leftJoin(users, eq(bookings.userId, users.id))
-    .leftJoin(showtimes, eq(bookings.showtimeId, showtimes.id))
-    .leftJoin(movies, eq(showtimes.movieId, movies.id))
-    .leftJoin(cinemas, eq(showtimes.cinemaId, cinemas.id))
+    .innerJoin(showtimes, eq(showtimes.id, bookings.showtimeId))
+    .innerJoin(movies, eq(movies.id, showtimes.movieId))
+    .innerJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
+    .innerJoin(rooms, eq(rooms.id, showtimes.roomId))
+    .where(where)
+    .orderBy(desc(bookings.createdAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  const ids: string[] = base.map((b) => b.id);
+
+  // BOOKED seats: dùng innerJoin để loại null
+  const booked = ids.length
+    ? await db
+        .select({
+          bookingId: bookingSeats.bookingId,
+          seatId: seats.id,
+          seatNumber: seats.seatNumber,
+          row: seats.row,
+          column: seats.column,
+          unitPrice: bookingSeats.unitPrice,
+        })
+        .from(bookingSeats)
+        .innerJoin(seats, eq(seats.id, bookingSeats.seatId))
+        .where(inArray(bookingSeats.bookingId, ids))
+    : [];
+
+  // HOLD seats còn sống: innerJoin seats để loại null
+  const now = new Date();
+  const holds = ids.length
+    ? await db
+        .select({
+          bookingId: bookingSeatHolds.bookingId,
+          seatId: seats.id,
+          seatNumber: seats.seatNumber,
+          row: seats.row,
+          column: seats.column,
+          expiresAt: bookingSeatHolds.expiresAt,
+        })
+        .from(bookingSeatHolds)
+        .innerJoin(seats, eq(seats.id, bookingSeatHolds.seatId))
+        .where(
+          and(
+            inArray(bookingSeatHolds.bookingId, ids),
+            gt(bookingSeatHolds.expiresAt, now),
+          ),
+        )
+    : [];
+
+  const seatBookedMap = new Map<string, BookingSeatEntry[]>();
+  for (const r of booked) {
+    const arr = seatBookedMap.get(r.bookingId) ?? [];
+    arr.push({
+      seatId: r.seatId,
+      seatNumber: r.seatNumber,
+      row: r.row,
+      column: Number(r.column),
+      unitPrice: String(r.unitPrice),
+      source: 'booked',
+    });
+    seatBookedMap.set(r.bookingId, arr);
+  }
+
+  const seatHoldMap = new Map<string, BookingSeatEntry[]>();
+  for (const r of holds) {
+    const arr = seatHoldMap.get(r.bookingId) ?? [];
+    arr.push({
+      seatId: r.seatId,
+      seatNumber: r.seatNumber,
+      row: r.row,
+      column: Number(r.column),
+      unitPrice: null,
+      source: 'hold',
+    });
+    seatHoldMap.set(r.bookingId, arr);
+  }
+
+  const items: BookingListItem[] = base.map((b) => {
+    const bookedSeatsArr = seatBookedMap.get(b.id) ?? [];
+    const holdSeatsArr = seatHoldMap.get(b.id) ?? [];
+    const mergedSeats = bookedSeatsArr.length ? bookedSeatsArr : holdSeatsArr;
+
+    return {
+      id: b.id,
+      bookingNumber: b.bookingNumber,
+      status: b.status,
+      paymentStatus: b.paymentStatus,
+      currency: b.currency,
+      subtotalAmount: String(b.subtotalAmount),
+      totalAmount: String(b.totalAmount),
+      expiresAt: b.expiresAt,
+      confirmedAt: b.confirmedAt,
+      cancelledAt: b.cancelledAt,
+      createdAt: b.createdAt,
+      showtime: {
+        id: b.st_id,
+        startsAt: b.st_startsAt,
+        price: String(b.st_price),
+        movie: { id: b.mv_id, title: b.mv_title, posterUrl: b.mv_posterUrl },
+        cinema: { id: b.cn_id, name: b.cn_name, city: b.cn_city },
+        room: { id: b.rm_id, name: b.rm_name },
+      },
+      seats: mergedSeats,
+    };
+  });
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(bookings)
+    .where(where);
+  return { items, total: Number(total) };
+}
+
+// ====== GET by id (trả nested + seats như list) ======
+export async function getById(id: string): Promise<BookingListItem> {
+  // Query trực tiếp 1 bản ghi với FLAT SELECT + INNER JOIN
+  const base = await db
+    .select({
+      id: bookings.id,
+      bookingNumber: bookings.bookingNumber,
+      status: bookings.status,
+      paymentStatus: bookings.paymentStatus,
+      currency: bookings.currency,
+      subtotalAmount: bookings.subtotalAmount,
+      totalAmount: bookings.totalAmount,
+      expiresAt: bookings.expiresAt,
+      confirmedAt: bookings.confirmedAt,
+      cancelledAt: bookings.cancelledAt,
+      createdAt: bookings.createdAt,
+
+      st_id: showtimes.id,
+      st_startsAt: showtimes.startsAt,
+      st_price: showtimes.price,
+
+      mv_id: movies.id,
+      mv_title: movies.title,
+      mv_posterUrl: movies.posterUrl,
+
+      cn_id: cinemas.id,
+      cn_name: cinemas.name,
+      cn_city: cinemas.city,
+
+      rm_id: rooms.id,
+      rm_name: rooms.name,
+    })
+    .from(bookings)
+    .innerJoin(showtimes, eq(showtimes.id, bookings.showtimeId))
+    .innerJoin(movies, eq(movies.id, showtimes.movieId))
+    .innerJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
+    .innerJoin(rooms, eq(rooms.id, showtimes.roomId))
     .where(eq(bookings.id, id))
     .limit(1);
 
-  if (!booking) {
-    throw new NotFoundError('Booking not found');
-  }
+  if (!base[0]) throw new NotFoundError('Booking not found');
+  const b = base[0];
 
-  // Get booking seats
-  const seatRows = await db
+  // Ghế BOOKED
+  const booked = await db
     .select({
-      id: bookingSeats.id,
-      seatId: bookingSeats.seatId,
-      price: bookingSeats.price,
-      status: bookingSeats.status,
-      seat: {
-        seatNumber: seats.seatNumber,
-        row: seats.row,
-        column: seats.column,
-        type: seats.type,
-      },
-    })
-    .from(bookingSeats)
-    .leftJoin(seats, eq(bookingSeats.seatId, seats.id))
-    .where(eq(bookingSeats.bookingId, id))
-    .orderBy(seats.row, seats.column);
-
-  // Get payments
-  const paymentHistory = await db
-    .select()
-    .from(payments)
-    .where(eq(payments.bookingId, id))
-    .orderBy(sql`${payments.createdAt} DESC`);
-
-  return {
-    ...booking,
-    seats: seatRows,
-    payments: paymentHistory,
-  };
-}
-
-export async function listBookings(
-  page = 1,
-  pageSize = 20,
-  filters?: BookingFilters,
-) {
-  const conditions = [];
-
-  if (filters?.userId) {
-    conditions.push(eq(bookings.userId, filters.userId));
-  }
-  if (filters?.showtimeId) {
-    conditions.push(eq(bookings.showtimeId, filters.showtimeId));
-  }
-  if (filters?.status) {
-    conditions.push(eq(bookings.status, filters.status));
-  }
-  if (filters?.paymentStatus) {
-    conditions.push(eq(bookings.paymentStatus, filters.paymentStatus));
-  }
-  if (filters?.bookingNumber) {
-    conditions.push(eq(bookings.bookingNumber, filters.bookingNumber));
-  }
-  if (filters?.movieId) {
-    conditions.push(eq(movies.id, filters.movieId));
-  }
-  if (filters?.cinemaId) {
-    conditions.push(eq(cinemas.id, filters.cinemaId));
-  }
-  if (filters?.fromDate) {
-    conditions.push(gte(bookings.createdAt, new Date(filters.fromDate)));
-  }
-  if (filters?.toDate) {
-    const toDate = new Date(filters.toDate);
-    toDate.setHours(23, 59, 59, 999);
-    conditions.push(lte(bookings.createdAt, toDate));
-  }
-
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const [rows, [{ total }]] = await Promise.all([
-    db
-      .select({
-        id: bookings.id,
-        bookingNumber: bookings.bookingNumber,
-        totalAmount: bookings.totalAmount,
-        totalSeats: bookings.totalSeats,
-        status: bookings.status,
-        paymentStatus: bookings.paymentStatus,
-        customerName: bookings.customerName,
-        customerEmail: bookings.customerEmail,
-        expiresAt: bookings.expiresAt,
-        confirmedAt: bookings.confirmedAt,
-        createdAt: bookings.createdAt,
-        movie: {
-          title: movies.title,
-        },
-        cinema: {
-          name: cinemas.name,
-          city: cinemas.city,
-        },
-        showtime: {
-          showDate: showtimes.showDate,
-          showTime: showtimes.showTime,
-        },
-      })
-      .from(bookings)
-      .leftJoin(showtimes, eq(bookings.showtimeId, showtimes.id))
-      .leftJoin(movies, eq(showtimes.movieId, movies.id))
-      .leftJoin(cinemas, eq(showtimes.cinemaId, cinemas.id))
-      .where(whereClause)
-      .orderBy(sql`${bookings.createdAt} DESC`)
-      .limit(pageSize)
-      .offset((page - 1) * pageSize),
-    db
-      .select({ total: count() })
-      .from(bookings)
-      .leftJoin(showtimes, eq(bookings.showtimeId, showtimes.id))
-      .leftJoin(movies, eq(showtimes.movieId, movies.id))
-      .leftJoin(cinemas, eq(showtimes.cinemaId, cinemas.id))
-      .where(whereClause),
-  ]);
-
-  return { items: rows, total: Number(total) };
-}
-
-export async function confirmBooking(
-  bookingId: string,
-  paymentMethod?: string,
-) {
-  const [booking] = await db
-    .select()
-    .from(bookings)
-    .where(eq(bookings.id, bookingId))
-    .limit(1);
-
-  if (!booking) {
-    throw new NotFoundError('Booking not found');
-  }
-
-  if (booking.status !== 'pending') {
-    throw new ValidationError('Only pending bookings can be confirmed');
-  }
-
-  // Check if booking has expired
-  if (booking.expiresAt && booking.expiresAt < new Date()) {
-    await cancelBooking(bookingId, 'Booking expired');
-    throw new ValidationError('Booking has expired');
-  }
-
-  await db.transaction(async (tx) => {
-    // Update booking status
-    await tx
-      .update(bookings)
-      .set({
-        status: 'confirmed',
-        paymentStatus: paymentMethod ? 'paid' : 'pending',
-        paymentMethod: paymentMethod ?? null,
-        confirmedAt: new Date(),
-      })
-      .where(eq(bookings.id, bookingId));
-
-    // Update booking seats status
-    await tx
-      .update(bookingSeats)
-      .set({ status: 'booked' })
-      .where(eq(bookingSeats.bookingId, bookingId));
-
-    // Create payment record if payment method provided
-    if (paymentMethod) {
-      await tx.insert(payments).values({
-        id: randomUUID(),
-        bookingId,
-        amount: booking.totalAmount,
-        method: paymentMethod,
-        status: 'completed',
-        processedAt: new Date(),
-      });
-    }
-  });
-
-  return await getBookingById(bookingId);
-}
-
-export async function cancelBooking(bookingId: string, reason?: string) {
-  const [booking] = await db
-    .select()
-    .from(bookings)
-    .where(eq(bookings.id, bookingId))
-    .limit(1);
-
-  if (!booking) {
-    throw new NotFoundError('Booking not found');
-  }
-
-  if (booking.status === 'cancelled') {
-    throw new ValidationError('Booking is already cancelled');
-  }
-
-  if (booking.status === 'confirmed') {
-    // Check if showtime is still in future (allow cancellation up to 2 hours before show)
-    const [showtime] = await db
-      .select({ showDate: showtimes.showDate, showTime: showtimes.showTime })
-      .from(showtimes)
-      .where(eq(showtimes.id, booking.showtimeId))
-      .limit(1);
-
-    if (showtime) {
-      const showtimeDateTime = new Date(
-        `${showtime.showDate.toISOString().split('T')[0]} ${showtime.showTime}`,
-      );
-      const twoHoursBefore = new Date(
-        showtimeDateTime.getTime() - 2 * 60 * 60 * 1000,
-      );
-
-      if (new Date() > twoHoursBefore) {
-        throw new ValidationError(
-          'Cannot cancel booking less than 2 hours before showtime',
-        );
-      }
-    }
-  }
-
-  await db.transaction(async (tx) => {
-    // Update booking status
-    await tx
-      .update(bookings)
-      .set({
-        status: 'cancelled',
-        cancelledAt: new Date(),
-        notes: reason
-          ? `${booking.notes || ''}\nCancelled: ${reason}`.trim()
-          : booking.notes,
-      })
-      .where(eq(bookings.id, bookingId));
-
-    // Update booking seats status
-    await tx
-      .update(bookingSeats)
-      .set({ status: 'cancelled' })
-      .where(eq(bookingSeats.bookingId, bookingId));
-
-    // Reduce booked seats count in showtime
-    await tx
-      .update(showtimes)
-      .set({
-        bookedSeats: sql`${showtimes.bookedSeats} - ${booking.totalSeats}`,
-      })
-      .where(eq(showtimes.id, booking.showtimeId));
-
-    // If booking was paid, create refund payment record
-    if (booking.paymentStatus === 'paid') {
-      await tx.insert(payments).values({
-        id: randomUUID(),
-        bookingId,
-        amount: `-${booking.totalAmount}`, // Negative amount for refund
-        method: booking.paymentMethod || 'refund',
-        status: 'pending',
-      });
-
-      // Update booking payment status
-      await tx
-        .update(bookings)
-        .set({ paymentStatus: 'refunded' })
-        .where(eq(bookings.id, bookingId));
-    }
-  });
-
-  return await getBookingById(bookingId);
-}
-
-export async function expireBookings() {
-  const now = new Date();
-
-  // Find expired pending bookings
-  const expiredBookings = await db
-    .select({
-      id: bookings.id,
-      totalSeats: bookings.totalSeats,
-      showtimeId: bookings.showtimeId,
-    })
-    .from(bookings)
-    .where(and(eq(bookings.status, 'pending'), lte(bookings.expiresAt, now)));
-
-  if (expiredBookings.length === 0) {
-    return { expired: 0 };
-  }
-
-  await db.transaction(async (tx) => {
-    for (const booking of expiredBookings) {
-      // Update booking status to expired
-      await tx
-        .update(bookings)
-        .set({
-          status: 'expired',
-          cancelledAt: now,
-        })
-        .where(eq(bookings.id, booking.id));
-
-      // Update booking seats status
-      await tx
-        .update(bookingSeats)
-        .set({ status: 'cancelled' })
-        .where(eq(bookingSeats.bookingId, booking.id));
-
-      // Reduce booked seats count in showtime
-      await tx
-        .update(showtimes)
-        .set({
-          bookedSeats: sql`${showtimes.bookedSeats} - ${booking.totalSeats}`,
-        })
-        .where(eq(showtimes.id, booking.showtimeId));
-    }
-  });
-
-  return { expired: expiredBookings.length };
-}
-
-export async function getBookingSeatAvailability(showtimeId: string) {
-  // Get all seats for the showtime's cinema
-  const [showtimeInfo] = await db
-    .select({
-      cinemaId: showtimes.cinemaId,
-      totalSeats: showtimes.totalSeats,
-      bookedSeats: showtimes.bookedSeats,
-    })
-    .from(showtimes)
-    .where(eq(showtimes.id, showtimeId))
-    .limit(1);
-
-  if (!showtimeInfo) {
-    throw new NotFoundError('Showtime not found');
-  }
-
-  // Get all seats for this cinema
-  const allSeats = await db
-    .select({
-      id: seats.id,
+      seatId: seats.id,
       seatNumber: seats.seatNumber,
       row: seats.row,
       column: seats.column,
-      type: seats.type,
-      price: seats.price,
-      isActive: seats.isActive,
+      unitPrice: bookingSeats.unitPrice,
     })
-    .from(seats)
-    .where(
-      and(eq(seats.cinemaId, showtimeInfo.cinemaId), eq(seats.isActive, true)),
-    )
-    .orderBy(seats.row, seats.column);
-
-  // Get booked/reserved seats for this showtime
-  const bookedSeatIds = await db
-    .select({ seatId: bookingSeats.seatId })
     .from(bookingSeats)
-    .leftJoin(bookings, eq(bookingSeats.bookingId, bookings.id))
+    .innerJoin(seats, eq(seats.id, bookingSeats.seatId))
+    .where(eq(bookingSeats.bookingId, id));
+
+  // Ghế HOLD còn sống
+  const now = new Date();
+  const holds = await db
+    .select({
+      seatId: seats.id,
+      seatNumber: seats.seatNumber,
+      row: seats.row,
+      column: seats.column,
+      expiresAt: bookingSeatHolds.expiresAt,
+    })
+    .from(bookingSeatHolds)
+    .innerJoin(seats, eq(seats.id, bookingSeatHolds.seatId))
     .where(
       and(
-        eq(bookings.showtimeId, showtimeId),
-        inArray(bookings.status, ['pending', 'confirmed']),
-        inArray(bookingSeats.status, ['reserved', 'booked']),
+        eq(bookingSeatHolds.bookingId, id),
+        gt(bookingSeatHolds.expiresAt, now),
       ),
     );
 
-  const bookedIds = new Set(bookedSeatIds.map((b) => b.seatId));
-
-  // Mark seats as available or booked
-  const seatsWithStatus = allSeats.map((seat) => ({
-    ...seat,
-    isAvailable: !bookedIds.has(seat.id),
-    bookingStatus: bookedIds.has(seat.id) ? 'booked' : 'available',
+  const bookedArr: BookingSeatEntry[] = booked.map((r) => ({
+    seatId: r.seatId,
+    seatNumber: r.seatNumber,
+    row: r.row,
+    column: Number(r.column),
+    unitPrice: String(r.unitPrice),
+    source: 'booked',
   }));
 
-  return {
-    showtimeId,
-    totalSeats: showtimeInfo.totalSeats,
-    bookedSeats: showtimeInfo.bookedSeats,
-    availableSeats: showtimeInfo.totalSeats - showtimeInfo.bookedSeats,
-    seats: seatsWithStatus,
-  };
-}
+  const holdArr: BookingSeatEntry[] = holds.map((r) => ({
+    seatId: r.seatId,
+    seatNumber: r.seatNumber,
+    row: r.row,
+    column: Number(r.column),
+    unitPrice: null,
+    source: 'hold',
+  }));
 
-export async function getUserBookings(userId: string, page = 1, pageSize = 10) {
-  return await listBookings(page, pageSize, { userId });
-}
-
-export async function getBookingByNumber(bookingNumber: string) {
-  const [booking] = await db
-    .select({ id: bookings.id })
-    .from(bookings)
-    .where(eq(bookings.bookingNumber, bookingNumber))
-    .limit(1);
-
-  if (!booking) {
-    throw new NotFoundError('Booking not found');
-  }
-
-  return await getBookingById(booking.id);
-}
-
-export async function updateBookingPaymentStatus(
-  bookingId: string,
-  paymentStatus: PaymentStatus,
-  transactionId?: string,
-) {
-  // Pre-check tồn tại (feedback nhanh)
-  const [booking] = await db
-    .select()
-    .from(bookings)
-    .where(eq(bookings.id, bookingId))
-    .limit(1);
-
-  if (!booking) {
-    throw new NotFoundError('Booking not found');
-  }
-
-  await db.transaction(async (tx) => {
-    // 🔒 Lock bản ghi booking
-    await tx.execute(
-      sql`SELECT id FROM ${bookings} WHERE ${bookings.id} = ${bookingId} FOR UPDATE`,
-    );
-
-    // (tuỳ chọn) idempotency theo transactionId – tránh ghi double
-    if (transactionId) {
-      const dup = await tx
-        .select({ id: payments.id })
-        .from(payments)
-        .where(eq(payments.transactionId, transactionId));
-      if (dup.length > 0) {
-        return; // đã xử lý giao dịch này rồi
-      }
-    }
-
-    // Lấy lại booking dưới lock để dùng amount/method mới nhất
-    const [bk] = await tx
-      .select({
-        id: bookings.id,
-        totalAmount: bookings.totalAmount,
-        paymentMethod: bookings.paymentMethod,
-        status: bookings.status,
-      })
-      .from(bookings)
-      .where(eq(bookings.id, bookingId));
-
-    if (!bk) throw new NotFoundError('Booking not found');
-
-    // Update payment status (và updatedAt)
-    await tx
-      .update(bookings)
-      .set({
-        paymentStatus,
-        // nếu muốn cập nhật method khi có gateway trả về:
-        // paymentMethod: booking.paymentMethod ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(bookings.id, bookingId));
-
-    // Ghi payment record
-    await tx.insert(payments).values({
-      id: randomUUID(),
-      bookingId,
-      amount: bk.totalAmount,
-      method: bk.paymentMethod ?? 'online',
-      status:
-        paymentStatus === 'paid'
-          ? 'completed'
-          : paymentStatus === 'failed'
-            ? 'failed'
-            : 'pending',
-      transactionId: transactionId ?? null, // tránh undefined
-      processedAt: paymentStatus === 'paid' ? new Date() : null,
-    });
-  });
-
-  return await getBookingById(bookingId);
-}
-
-// Admin functions
-export async function getBookingStats(fromDate?: string, toDate?: string) {
-  const conditions = [];
-
-  if (fromDate) {
-    conditions.push(gte(bookings.createdAt, new Date(fromDate)));
-  }
-  if (toDate) {
-    const to = new Date(toDate);
-    to.setHours(23, 59, 59, 999);
-    conditions.push(lte(bookings.createdAt, to));
-  }
-
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const [stats] = await db
-    .select({
-      totalBookings: count(),
-      totalRevenue: sql<number>`SUM(CASE WHEN ${bookings.paymentStatus} = 'paid' THEN ${bookings.totalAmount} ELSE 0 END)`,
-      pendingBookings: sql<number>`SUM(CASE WHEN ${bookings.status} = 'pending' THEN 1 ELSE 0 END)`,
-      confirmedBookings: sql<number>`SUM(CASE WHEN ${bookings.status} = 'confirmed' THEN 1 ELSE 0 END)`,
-      cancelledBookings: sql<number>`SUM(CASE WHEN ${bookings.status} = 'cancelled' THEN 1 ELSE 0 END)`,
-      expiredBookings: sql<number>`SUM(CASE WHEN ${bookings.status} = 'expired' THEN 1 ELSE 0 END)`,
-    })
-    .from(bookings)
-    .where(whereClause);
+  const seatsMerged = bookedArr.length ? bookedArr : holdArr;
 
   return {
-    totalBookings: Number(stats.totalBookings) || 0,
-    totalRevenue: Number(stats.totalRevenue) || 0,
-    pendingBookings: Number(stats.pendingBookings) || 0,
-    confirmedBookings: Number(stats.confirmedBookings) || 0,
-    cancelledBookings: Number(stats.cancelledBookings) || 0,
-    expiredBookings: Number(stats.expiredBookings) || 0,
+    id: b.id,
+    bookingNumber: b.bookingNumber,
+    status: b.status,
+    paymentStatus: b.paymentStatus,
+    currency: b.currency,
+    subtotalAmount: String(b.subtotalAmount),
+    totalAmount: String(b.totalAmount),
+    expiresAt: b.expiresAt,
+    confirmedAt: b.confirmedAt,
+    cancelledAt: b.cancelledAt,
+    createdAt: b.createdAt,
+    showtime: {
+      id: b.st_id,
+      startsAt: b.st_startsAt,
+      price: String(b.st_price),
+      movie: { id: b.mv_id, title: b.mv_title, posterUrl: b.mv_posterUrl },
+      cinema: { id: b.cn_id, name: b.cn_name, city: b.cn_city },
+      room: { id: b.rm_id, name: b.rm_name },
+    },
+    seats: seatsMerged,
   };
 }

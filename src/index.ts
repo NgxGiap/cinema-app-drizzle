@@ -7,6 +7,7 @@ import { responseWrapper } from './utils/http';
 import { requestContext } from './middlewares/requestContext';
 import { errorHandler } from './middlewares/error';
 import router from './routes';
+import { cleanupExpiredHolds } from './services/booking.service';
 
 const app = express();
 app.use(helmet());
@@ -24,3 +25,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log(`Cinema API listening on http://localhost:${PORT}`),
 );
+
+setInterval(() => {
+  cleanupExpiredHolds().catch((e) => console.error('[cleanup holds]', e));
+}, 60_000);

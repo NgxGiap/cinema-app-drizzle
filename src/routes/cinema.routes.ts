@@ -4,25 +4,34 @@ import { requireAuth, optionalAuth } from '../middlewares/auth';
 import { authorize } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
 import {
-  validateCinemaCreation,
   validatePagination,
+  validateCinemaListQuery,
+  validateCinemaCreate,
+  validateCinemaUpdate,
+  handleValidationErrors,
 } from '../middlewares/validation';
 
 const r = Router();
 
-// Public routes
-r.get('/', optionalAuth, validatePagination, c.listCinemas);
-
+/** Public */
+r.get(
+  '/',
+  optionalAuth,
+  validatePagination,
+  validateCinemaListQuery,
+  handleValidationErrors,
+  c.listCinemas,
+);
 r.get('/cities', optionalAuth, c.getCitiesList);
+r.get('/:id', optionalAuth, handleValidationErrors, c.getCinema);
 
-r.get('/:id', optionalAuth, c.getCinema);
-
-// Protected routes - Admin/Manager only
+/** Admin */
 r.post(
   '/',
   requireAuth,
   authorize(Permission.MANAGE_CINEMAS),
-  validateCinemaCreation,
+  validateCinemaCreate,
+  handleValidationErrors,
   c.createCinema,
 );
 
@@ -30,6 +39,8 @@ r.put(
   '/:id',
   requireAuth,
   authorize(Permission.MANAGE_CINEMAS),
+  validateCinemaUpdate,
+  handleValidationErrors,
   c.updateCinema,
 );
 
@@ -37,6 +48,7 @@ r.patch(
   '/:id/toggle-status',
   requireAuth,
   authorize(Permission.MANAGE_CINEMAS),
+  handleValidationErrors,
   c.toggleCinemaStatus,
 );
 
@@ -44,6 +56,7 @@ r.delete(
   '/:id',
   requireAuth,
   authorize(Permission.MANAGE_CINEMAS),
+  handleValidationErrors,
   c.deleteCinema,
 );
 
