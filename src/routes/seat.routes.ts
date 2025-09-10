@@ -29,7 +29,7 @@ router.get(
 );
 
 router.get(
-  '/rooms/:roomId/showtimes/:showtimeId/seat-map',
+  '/rooms/:roomId/show_times/:showtimeId/seat-map',
   optionalAuth,
   validateSeatMapParams,
   handleValidationErrors,

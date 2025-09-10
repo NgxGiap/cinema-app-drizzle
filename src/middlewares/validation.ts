@@ -63,7 +63,6 @@ export const validateMovieCreate = [
   body('posterUrl').optional().isURL(),
   body('trailerUrl').optional().isURL(),
 
-  // genres/directors/cast: cho phép string[] hoặc string CSV
   body('genres')
     .optional()
     .custom((v) => Array.isArray(v) || typeof v === 'string'),
@@ -170,7 +169,7 @@ export const validateSeatListQuery = [
   query('pageSize').optional().isInt({ min: 1, max: 200 }).toInt(),
 ];
 
-/** GET /seats/rooms/:roomId/showtimes/:showtimeId/seat-map */
+/** GET /seats/rooms/:roomId/show_times/:showtimeId/seat-map */
 export const validateSeatMapParams = [
   param('roomId').isString().trim().isLength({ min: 1 }),
   param('showtimeId').isString().trim().isLength({ min: 1 }),
@@ -234,7 +233,7 @@ export const validateIdParam = [
   param('id').isString().trim().isLength({ min: 1 }),
 ];
 
-/** GET /showtimes?cinemaId=&movieId=&roomId=&from=&to=&isActive= */
+/** GET /show_times?cinemaId=&movieId=&roomId=&from=&to=&isActive= */
 export const validateShowtimeListQuery = [
   query('cinemaId').optional().isString().trim().isLength({ min: 1 }),
   query('movieId').optional().isString().trim().isLength({ min: 1 }),
@@ -290,7 +289,7 @@ export const validateShowtimeCreation = [
   }),
 ];
 
-/** PUT /showtimes/:id */
+/** PUT /show_times/:id */
 export const validateShowtimeUpdate = [
   body('movieId').optional().isString().trim().isLength({ min: 1 }),
   body('cinemaId').optional().isString().trim().isLength({ min: 1 }),
@@ -302,7 +301,6 @@ export const validateShowtimeUpdate = [
     .matches(/^\d+(\.\d{1,2})?$/),
   body('isActive').optional().isBoolean().toBoolean(),
   body('startsAt').optional().isISO8601(),
-  // cũng cho phép cặp showDate/showTime như compat
   body('showDate').optional().isISO8601(),
   body('showTime')
     .optional()
@@ -336,7 +334,6 @@ export const validateRoomUpdate = [
     .custom((v) => typeof v === 'object' || v === null),
 ];
 
-/** Seat layout (preview/apply) – validate tối thiểu */
 export const validateSeatLayout = [
   body('defaultPrice').isString().trim().isLength({ min: 1 }),
   body('blocks').isArray({ min: 1 }),
@@ -449,7 +446,6 @@ export const validatePaymentIntent = [
   body('currency').optional().isString().trim().isLength({ min: 1, max: 5 }),
   body('method').isIn(paymentMethodEnum),
   body('transactionId').optional().isString().trim().isLength({ min: 1 }),
-  // metadata: tuỳ ý nên không ràng buộc
 ];
 
 export const validatePaymentWebhook = [
@@ -462,7 +458,6 @@ export const validatePaymentWebhook = [
     .trim()
     .isLength({ min: 1, max: 500 }),
   body('processedAt').optional().isISO8601(),
-  // gatewayResponse: cho phép bất kỳ
 ];
 
 export const validateTicketScan = [

@@ -204,9 +204,9 @@ export const seats = mysqlTable(
   }),
 );
 
-/** SHOWTIMES — gộp thời gian: starts_at, có room_id */
-export const showtimes = mysqlTable(
-  'showtimes',
+/** show_times — gộp thời gian: starts_at, có room_id */
+export const show_times = mysqlTable(
+  'show_times',
   {
     id: varchar('id', { length: 36 })
       .primaryKey()
@@ -261,7 +261,7 @@ export const bookings = mysqlTable(
     userId: varchar('user_id', { length: 36 }),
     showtimeId: varchar('showtime_id', { length: 36 })
       .notNull()
-      .references(() => showtimes.id, { onDelete: 'restrict' }),
+      .references(() => show_times.id, { onDelete: 'restrict' }),
 
     status: mysqlEnum(
       'status',
@@ -325,7 +325,7 @@ export const bookingSeats = mysqlTable(
       .references(() => bookings.id, { onDelete: 'cascade' }),
     showtimeId: varchar('showtime_id', { length: 36 })
       .notNull()
-      .references(() => showtimes.id, { onDelete: 'cascade' }),
+      .references(() => show_times.id, { onDelete: 'cascade' }),
     seatId: varchar('seat_id', { length: 36 })
       .notNull()
       .references(() => seats.id, { onDelete: 'restrict' }),
@@ -358,7 +358,7 @@ export const bookingSeatHolds = mysqlTable(
 
     showtimeId: varchar('showtime_id', { length: 36 })
       .notNull()
-      .references(() => showtimes.id, { onDelete: 'cascade' }),
+      .references(() => show_times.id, { onDelete: 'cascade' }),
 
     seatId: varchar('seat_id', { length: 36 })
       .notNull()
@@ -427,7 +427,7 @@ export const tickets = mysqlTable(
       .references(() => bookings.id, { onDelete: 'cascade' }),
     showtimeId: varchar('showtime_id', { length: 36 })
       .notNull()
-      .references(() => showtimes.id, { onDelete: 'cascade' }),
+      .references(() => show_times.id, { onDelete: 'cascade' }),
     seatId: varchar('seat_id', { length: 36 })
       .notNull()
       .references(() => seats.id, { onDelete: 'restrict' }),
@@ -456,7 +456,7 @@ export const tickets = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
   },
   (t) => ({
-    uqShowtimeSeat: uniqueIndex('uq_ticket_showtime_seat').on(
+    uqshow_timeseat: uniqueIndex('uq_ticket_showtime_seat').on(
       t.showtimeId,
       t.seatId,
     ),
@@ -476,13 +476,13 @@ export const tickets = mysqlTable(
 
 export const cinemasRelations = relations(cinemas, ({ many }) => ({
   rooms: many(rooms),
-  showtimes: many(showtimes),
+  show_times: many(show_times),
 }));
 
 export const roomsRelations = relations(rooms, ({ one, many }) => ({
   cinema: one(cinemas, { fields: [rooms.cinemaId], references: [cinemas.id] }),
   seats: many(seats),
-  showtimes: many(showtimes),
+  show_times: many(show_times),
 }));
 
 export const seatsRelations = relations(seats, ({ one }) => ({
@@ -490,24 +490,27 @@ export const seatsRelations = relations(seats, ({ one }) => ({
 }));
 
 export const moviesRelations = relations(movies, ({ many }) => ({
-  showtimes: many(showtimes),
+  show_times: many(show_times),
 }));
 
-export const showtimesRelations = relations(showtimes, ({ one, many }) => ({
-  movie: one(movies, { fields: [showtimes.movieId], references: [movies.id] }),
+export const show_timesRelations = relations(show_times, ({ one, many }) => ({
+  movie: one(movies, {
+    fields: [show_times.movieId],
+    references: [movies.id],
+  }),
   cinema: one(cinemas, {
-    fields: [showtimes.cinemaId],
+    fields: [show_times.cinemaId],
     references: [cinemas.id],
   }),
-  room: one(rooms, { fields: [showtimes.roomId], references: [rooms.id] }),
+  room: one(rooms, { fields: [show_times.roomId], references: [rooms.id] }),
   bookings: many(bookings),
 }));
 
 export const bookingsRelations = relations(bookings, ({ one, many }) => ({
   user: one(users, { fields: [bookings.userId], references: [users.id] }),
-  showtime: one(showtimes, {
+  showtime: one(show_times, {
     fields: [bookings.showtimeId],
-    references: [showtimes.id],
+    references: [show_times.id],
   }),
   seats: many(bookingSeats),
   payments: many(payments),
@@ -519,9 +522,9 @@ export const bookingSeatsRelations = relations(bookingSeats, ({ one }) => ({
     fields: [bookingSeats.bookingId],
     references: [bookings.id],
   }),
-  showtime: one(showtimes, {
+  showtime: one(show_times, {
     fields: [bookingSeats.showtimeId],
-    references: [showtimes.id],
+    references: [show_times.id],
   }),
   seat: one(seats, { fields: [bookingSeats.seatId], references: [seats.id] }),
 }));
@@ -538,9 +541,9 @@ export const ticketsRelations = relations(tickets, ({ one }) => ({
     fields: [tickets.bookingId],
     references: [bookings.id],
   }),
-  showtime: one(showtimes, {
+  showtime: one(show_times, {
     fields: [tickets.showtimeId],
-    references: [showtimes.id],
+    references: [show_times.id],
   }),
   seat: one(seats, { fields: [tickets.seatId], references: [seats.id] }),
 }));
@@ -563,8 +566,8 @@ export type NewRoom = typeof rooms.$inferInsert;
 export type Seat = typeof seats.$inferSelect;
 export type NewSeat = typeof seats.$inferInsert;
 
-export type Showtime = typeof showtimes.$inferSelect;
-export type NewShowtime = typeof showtimes.$inferInsert;
+export type Showtime = typeof show_times.$inferSelect;
+export type NewShowtime = typeof show_times.$inferInsert;
 
 export type Booking = typeof bookings.$inferSelect;
 export type NewBooking = typeof bookings.$inferInsert;

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../db';
-import { seats, showtimes, tickets } from '../db/schema';
+import { seats, show_times, tickets } from '../db/schema';
 import { ConflictError, NotFoundError } from '../utils/errors/base';
 
 export type TicketStatus = 'ISSUED' | 'CHECKED_IN' | 'VOIDED' | 'REFUNDED';
@@ -240,10 +240,10 @@ export async function assertUsableForShowtime(ticketId: string): Promise<void> {
     .select({
       id: tickets.id,
       status: tickets.status,
-      startsAt: showtimes.startsAt,
+      startsAt: show_times.startsAt,
     })
     .from(tickets)
-    .innerJoin(showtimes, eq(showtimes.id, tickets.showtimeId))
+    .innerJoin(show_times, eq(show_times.id, tickets.showtimeId))
     .where(eq(tickets.id, ticketId))
     .limit(1);
 

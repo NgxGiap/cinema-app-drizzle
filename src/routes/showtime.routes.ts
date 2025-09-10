@@ -21,13 +21,13 @@ r.get(
   validatePagination,
   validateShowtimeListQuery,
   handleValidationErrors,
-  c.listShowtimes,
+  c.listShow_times,
 );
 r.get(
   '/upcoming',
   optionalAuth,
   handleValidationErrors,
-  c.getUpcomingShowtimes,
+  c.getUpcomingShow_times,
 );
 
 /** Admin */
@@ -65,7 +65,7 @@ r.patch(
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
   validateIdParam,
   handleValidationErrors,
-  c.toggleShowtimeStatus,
+  c.toggleShow_timeStatus,
 );
 
 r.delete(

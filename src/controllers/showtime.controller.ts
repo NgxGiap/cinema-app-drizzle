@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import * as svc from '../services/showtime.service';
 import { makePagination } from '../utils/http';
 
-/** build Date từ body: ưu tiên startsAt; fallback showDate + showTime */
 function buildStartsAt(body: unknown): Date | null {
   if (!body || typeof body !== 'object') return null;
   const b = body as Record<string, unknown>;
@@ -11,13 +10,13 @@ function buildStartsAt(body: unknown): Date | null {
     return Number.isNaN(+d) ? null : d;
   }
   if (typeof b.showDate === 'string' && typeof b.showTime === 'string') {
-    const d = new Date(`${b.showDate}T${b.showTime}Z`); // giả định FE gửi giờ theo UTC; chỉnh nếu bạn muốn local
+    const d = new Date(`${b.showDate}T${b.showTime}Z`);
     return Number.isNaN(+d) ? null : d;
   }
   return null;
 }
 
-export async function listShowtimes(
+export async function listShow_times(
   req: Request,
   res: Response,
   next: NextFunction,
@@ -76,7 +75,7 @@ export async function createShowtime(
     const payload: svc.CreateShowtimeInput = {
       movieId: String(req.body.movieId),
       cinemaId: String(req.body.cinemaId),
-      // roomId là optional; nếu không gửi, service sẽ dùng Room 1
+
       roomId:
         typeof req.body.roomId === 'string' && req.body.roomId
           ? req.body.roomId
@@ -88,8 +87,6 @@ export async function createShowtime(
     };
 
     const created = await svc.create(payload);
-    // nếu bạn muốn 201:
-    // return res.status(201).json({ data: created, message: 'Showtime created' });
     return res.ok(created, 'Showtime created');
   } catch (error) {
     next(error);
@@ -122,7 +119,7 @@ export async function updateShowtime(
   }
 }
 
-export async function toggleShowtimeStatus(
+export async function toggleShow_timeStatus(
   req: Request,
   res: Response,
   next: NextFunction,
@@ -148,7 +145,7 @@ export async function deleteShowtime(
   }
 }
 
-export async function getUpcomingShowtimes(
+export async function getUpcomingShow_times(
   req: Request,
   res: Response,
   next: NextFunction,
@@ -161,7 +158,7 @@ export async function getUpcomingShowtimes(
     const { items, total } = await svc.getUpcoming(days, page, pageSize);
     return res.ok(
       { items, total, pagination: makePagination(page, pageSize, total) },
-      'Upcoming showtimes fetched',
+      'Upcoming show_times fetched',
     );
   } catch (error) {
     next(error);

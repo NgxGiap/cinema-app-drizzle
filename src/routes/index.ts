@@ -17,7 +17,7 @@ router.use('/users', userRoutes);
 router.use('/movies', movieRoutes);
 router.use('/cinemas', cinemaRoutes);
 router.use('/seats', seatRoutes);
-router.use('/showtimes', showtimeRoutes);
+router.use('/show_times', showtimeRoutes);
 router.use('/bookings', bookingRoutes);
 router.use('/rooms', roomRoutes);
 router.use('/payments', paymentRoutes);

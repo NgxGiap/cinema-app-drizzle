@@ -5,9 +5,9 @@ import { db } from '../db';
 import {
   bookings,
   bookingSeats,
-  bookingSeatHolds, // <— bảng tạm HOLD
+  bookingSeatHolds,
   seats,
-  showtimes,
+  show_times,
   movies,
   cinemas,
   rooms,
@@ -20,14 +20,12 @@ import {
   NotFoundError,
 } from '../utils/errors/base';
 
-// ====== Cấu hình HOLD ======
 const HOLD_MINUTES = 5 as const;
 
-// ====== Kiểu dữ liệu public cho service ======
 export type HoldSeatsInput = {
   userId?: string;
   showtimeId: string;
-  seatIds: string[]; // chỉ seatId, KHÔNG truyền giá
+  seatIds: string[];
 };
 
 export type HoldItem = {
@@ -50,7 +48,7 @@ export type BookingSeatEntry = {
   seatNumber: string;
   row: string;
   column: number;
-  unitPrice: string | null; // null nếu đang hold (chưa chốt giá)
+  unitPrice: string | null;
   source: 'booked' | 'hold';
 };
 
@@ -86,7 +84,6 @@ export type BookingFilters = {
 
 // ====== Helpers ======
 async function nextBookingNumber(): Promise<string> {
-  // Tuỳ bạn thay bằng sequence/format riêng
   return 'BK' + Date.now();
 }
 
@@ -97,7 +94,6 @@ export async function cleanupExpiredHolds(): Promise<void> {
     .where(lt(bookingSeatHolds.expiresAt, new Date()));
 }
 
-// ====== HOLD ghế 5 phút — KHÔNG dính giá ======
 export async function holdSeats(
   input: HoldSeatsInput,
 ): Promise<HoldSeatsResult> {
@@ -115,12 +111,12 @@ export async function holdSeats(
     // 2) showtime hợp lệ & active
     const [st] = await tx
       .select({
-        id: showtimes.id,
-        roomId: showtimes.roomId,
-        isActive: showtimes.isActive,
+        id: show_times.id,
+        roomId: show_times.roomId,
+        isActive: show_times.isActive,
       })
-      .from(showtimes)
-      .where(eq(showtimes.id, input.showtimeId))
+      .from(show_times)
+      .where(eq(show_times.id, input.showtimeId))
       .limit(1);
 
     if (!st || !st.isActive)
@@ -292,9 +288,9 @@ export async function finalizeBookingSeats(
 
     // fallback: đơn giá theo showtime nếu chưa có pricing
     const [st] = await tx
-      .select({ price: showtimes.price })
-      .from(showtimes)
-      .where(eq(showtimes.id, b.showtimeId))
+      .select({ price: show_times.price })
+      .from(show_times)
+      .where(eq(show_times.id, b.showtimeId))
       .limit(1);
     const defaultUnit = String(st?.price ?? '0.00');
 
@@ -318,11 +314,11 @@ export async function finalizeBookingSeats(
       .delete(bookingSeatHolds)
       .where(eq(bookingSeatHolds.bookingId, bookingId));
 
-    // tăng showtimes.booked_seats
+    // tăng show_times.booked_seats
     await tx
-      .update(showtimes)
-      .set({ bookedSeats: sql`${showtimes.bookedSeats} + ${holds.length}` })
-      .where(eq(showtimes.id, b.showtimeId));
+      .update(show_times)
+      .set({ bookedSeats: sql`${show_times.bookedSeats} + ${holds.length}` })
+      .where(eq(show_times.id, b.showtimeId));
 
     // xác nhận booking
     await tx
@@ -370,9 +366,9 @@ export async function list(
       cancelledAt: bookings.cancelledAt,
       createdAt: bookings.createdAt,
 
-      st_id: showtimes.id,
-      st_startsAt: showtimes.startsAt,
-      st_price: showtimes.price,
+      st_id: show_times.id,
+      st_startsAt: show_times.startsAt,
+      st_price: show_times.price,
 
       mv_id: movies.id,
       mv_title: movies.title,
@@ -386,10 +382,10 @@ export async function list(
       rm_name: rooms.name,
     })
     .from(bookings)
-    .innerJoin(showtimes, eq(showtimes.id, bookings.showtimeId))
-    .innerJoin(movies, eq(movies.id, showtimes.movieId))
-    .innerJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
-    .innerJoin(rooms, eq(rooms.id, showtimes.roomId))
+    .innerJoin(show_times, eq(show_times.id, bookings.showtimeId))
+    .innerJoin(movies, eq(movies.id, show_times.movieId))
+    .innerJoin(cinemas, eq(cinemas.id, show_times.cinemaId))
+    .innerJoin(rooms, eq(rooms.id, show_times.roomId))
     .where(where)
     .orderBy(desc(bookings.createdAt))
     .limit(pageSize)
@@ -516,9 +512,9 @@ export async function getById(id: string): Promise<BookingListItem> {
       cancelledAt: bookings.cancelledAt,
       createdAt: bookings.createdAt,
 
-      st_id: showtimes.id,
-      st_startsAt: showtimes.startsAt,
-      st_price: showtimes.price,
+      st_id: show_times.id,
+      st_startsAt: show_times.startsAt,
+      st_price: show_times.price,
 
       mv_id: movies.id,
       mv_title: movies.title,
@@ -532,10 +528,10 @@ export async function getById(id: string): Promise<BookingListItem> {
       rm_name: rooms.name,
     })
     .from(bookings)
-    .innerJoin(showtimes, eq(showtimes.id, bookings.showtimeId))
-    .innerJoin(movies, eq(movies.id, showtimes.movieId))
-    .innerJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
-    .innerJoin(rooms, eq(rooms.id, showtimes.roomId))
+    .innerJoin(show_times, eq(show_times.id, bookings.showtimeId))
+    .innerJoin(movies, eq(movies.id, show_times.movieId))
+    .innerJoin(cinemas, eq(cinemas.id, show_times.cinemaId))
+    .innerJoin(rooms, eq(rooms.id, show_times.roomId))
     .where(eq(bookings.id, id))
     .limit(1);
 

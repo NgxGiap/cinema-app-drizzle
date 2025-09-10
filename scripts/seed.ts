@@ -6,7 +6,7 @@ import {
   cinemas,
   rooms,
   seats,
-  showtimes,
+  show_times,
   bookings,
   bookingSeats,
   payments,
@@ -180,10 +180,9 @@ async function seed() {
     await db.insert(seats).values(seatInserts);
     console.log(`✅ Seats seeded (${seatInserts.length})`);
 
-    /* SHOWTIMES (2 phim / room, mỗi phim 3 suất khác giờ) */
-    await db.delete(showtimes);
+    await db.delete(show_times);
     const movieRows = await db.select().from(movies);
-    const showtimeInserts: (typeof showtimes.$inferInsert)[] = [];
+    const showtimeInserts: (typeof show_times.$inferInsert)[] = [];
     const startBase = new Date();
     startBase.setMinutes(0, 0, 0);
 
@@ -193,8 +192,7 @@ async function seed() {
       return t;
     }
 
-    // giờ chiếu cơ bản
-    const baseSlots = [10, 14, 19]; // giờ 10h, 14h, 19h30
+    const baseSlots = [10, 14, 19];
     for (const r of roomList) {
       const cin = [cgv1, cgv2].find((c) => c.id === r.cinemaId)!;
 
@@ -210,7 +208,7 @@ async function seed() {
             movieId: mv.id!,
             cinemaId: cin.id!,
             roomId: r.id!,
-            startsAt: at(d1, baseSlots[0] + i * 3), // phim 1: 10h, phim 2: 13h
+            startsAt: at(d1, baseSlots[0] + i * 3),
             price: '90000.00',
             totalSeats: 50,
             bookedSeats: 0,
@@ -221,7 +219,7 @@ async function seed() {
             movieId: mv.id!,
             cinemaId: cin.id!,
             roomId: r.id!,
-            startsAt: at(d1, baseSlots[1] + i * 3), // phim 1: 14h, phim 2: 17h
+            startsAt: at(d1, baseSlots[1] + i * 3),
             price: '90000.00',
             totalSeats: 50,
             bookedSeats: 0,
@@ -232,7 +230,7 @@ async function seed() {
             movieId: mv.id!,
             cinemaId: cin.id!,
             roomId: r.id!,
-            startsAt: at(d2, baseSlots[2] + i * 3, 30), // phim 1: 19h30, phim 2: 22h30
+            startsAt: at(d2, baseSlots[2] + i * 3, 30),
             price: '100000.00',
             totalSeats: 50,
             bookedSeats: 0,
@@ -242,8 +240,8 @@ async function seed() {
       });
     }
 
-    await db.insert(showtimes).values(showtimeInserts);
-    console.log(`✅ Showtimes seeded (${showtimeInserts.length})`);
+    await db.insert(show_times).values(showtimeInserts);
+    console.log(`✅ show_times seeded (${showtimeInserts.length})`);
 
     /* BOOKINGS (+ booking_seats, payments, tickets) */
     await db.delete(bookings);
@@ -254,12 +252,12 @@ async function seed() {
     const [u1, u2] = await db.select().from(users).limit(2);
     const futureShow = await db
       .select({
-        id: showtimes.id,
-        roomId: showtimes.roomId,
-        startsAt: showtimes.startsAt,
-        price: showtimes.price,
+        id: show_times.id,
+        roomId: show_times.roomId,
+        startsAt: show_times.startsAt,
+        price: show_times.price,
       })
-      .from(showtimes)
+      .from(show_times)
       .limit(3);
 
     // pick some seats of first showtime
@@ -312,11 +310,11 @@ async function seed() {
 
       // increment bookedSeats
       await tx
-        .update(showtimes)
+        .update(show_times)
         .set({
-          bookedSeats: sql`${showtimes.bookedSeats} + ${someSeats.length}`,
+          bookedSeats: sql`${show_times.bookedSeats} + ${someSeats.length}`,
         })
-        .where(eq(showtimes.id, b1.showtimeId));
+        .where(eq(show_times.id, b1.showtimeId));
 
       // payment + tickets
       await tx.insert(payments).values({
@@ -390,11 +388,11 @@ async function seed() {
       );
 
       await tx
-        .update(showtimes)
+        .update(show_times)
         .set({
-          bookedSeats: sql`${showtimes.bookedSeats} + ${holdSeats.length}`,
+          bookedSeats: sql`${show_times.bookedSeats} + ${holdSeats.length}`,
         })
-        .where(eq(showtimes.id, b2.showtimeId));
+        .where(eq(show_times.id, b2.showtimeId));
     });
 
     console.log('✅ Bookings/Payments/Tickets seeded');
