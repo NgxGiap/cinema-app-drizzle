@@ -17,10 +17,16 @@ r.post(
   optionalAuth,
   validateBookingHold,
   handleValidationErrors,
-  c.hold,
+  c.holdSeats,
 );
 
-r.get('/:id', optionalAuth, validateIdParam, handleValidationErrors, c.getById);
+r.get(
+  '/:id',
+  optionalAuth,
+  validateIdParam,
+  handleValidationErrors,
+  c.getBooking,
+);
 
 /** Admin/Dev helpers */
 r.post(
@@ -29,7 +35,7 @@ r.post(
   authorize(Permission.MANAGE_BOOKINGS),
   validateIdParam,
   handleValidationErrors,
-  c.cancel,
+  c.cancelBooking,
 );
 
 r.post(

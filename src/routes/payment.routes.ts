@@ -4,7 +4,6 @@ import { requireAuth, optionalAuth } from '../middlewares/auth';
 import { authorize } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
 import {
-  validatePaymentIntent,
   validatePaymentWebhook,
   validateIdParam,
   handleValidationErrors,
@@ -16,7 +15,7 @@ const r = Router();
 r.post(
   '/intent',
   optionalAuth,
-  validatePaymentIntent,
+
   handleValidationErrors,
   c.createIntent,
 );

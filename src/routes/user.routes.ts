@@ -1,52 +1,67 @@
 import { Router } from 'express';
 import * as c from '../controllers/user.controller';
 import { requireAuth } from '../middlewares/auth';
-import { authorize, requireOwnership } from '../middlewares/authorize';
+import { authorize, authorizeAny } from '../middlewares/authorize';
 import { Permission } from '../utils/auth/roles';
 import {
-  validateUserCreation,
+  handleValidationErrors,
   validatePagination,
+  validateIdParam,
+  validateUserListQuery,
+  validateUserCreate,
+  validateUserUpdate,
 } from '../middlewares/validation';
 
 const r = Router();
 
-// List users - Admin only
 r.get(
   '/',
   requireAuth,
-  authorize(Permission.MANAGE_USERS),
+  authorize(Permission.VIEW_USERS),
   validatePagination,
+  validateUserListQuery,
+  handleValidationErrors,
   c.listUsers,
 );
 
-// Get user by ID - Admin or own profile
 r.get(
   '/:id',
   requireAuth,
-  authorize(Permission.VIEW_USERS, Permission.MANAGE_USERS),
-  requireOwnership,
-  c.getUser,
+  authorize(Permission.VIEW_USERS),
+  validateIdParam,
+  handleValidationErrors,
+  c.getUserById,
 );
 
-// Create user - Admin only
 r.post(
   '/',
   requireAuth,
   authorize(Permission.MANAGE_USERS),
-  validateUserCreation,
+  validateUserCreate,
+  handleValidationErrors,
   c.createUser,
 );
 
-// Update user - Admin or own profile
 r.put(
   '/:id',
   requireAuth,
-  authorize(Permission.MANAGE_USERS),
-  requireOwnership,
+  authorizeAny(
+    Permission.MANAGE_USERS,
+    (req) => req.user?.id === req.params.id,
+  ),
+  validateIdParam,
+  validateUserUpdate,
+  handleValidationErrors,
   c.updateUser,
 );
 
-// Delete user - Admin only
-r.delete('/:id', requireAuth, authorize(Permission.MANAGE_USERS), c.deleteUser);
+r.delete(
+  '/:id',
+  requireAuth,
+  authorize(Permission.MANAGE_USERS),
+  validateIdParam,
+  handleValidationErrors,
+  c.deleteUser,
+);
 
 export default r;

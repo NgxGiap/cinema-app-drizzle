@@ -1,13 +1,13 @@
-// src/services/booking.service.ts
 import { randomUUID } from 'crypto';
 import { and, count, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
+import logger from '../utils/logger/logger';
 import { db } from '../db';
 import {
   bookings,
   bookingSeats,
-  bookingSeatHolds, // <— bảng tạm HOLD
+  bookingSeatHolds,
   seats,
-  showtimes,
+  show_times,
   movies,
   cinemas,
   rooms,
@@ -20,14 +20,12 @@ import {
   NotFoundError,
 } from '../utils/errors/base';
 
-// ====== Cấu hình HOLD ======
 const HOLD_MINUTES = 5 as const;
 
-// ====== Kiểu dữ liệu public cho service ======
 export type HoldSeatsInput = {
   userId?: string;
   showtimeId: string;
-  seatIds: string[]; // chỉ seatId, KHÔNG truyền giá
+  seatIds: string[];
 };
 
 export type HoldItem = {
@@ -50,7 +48,7 @@ export type BookingSeatEntry = {
   seatNumber: string;
   row: string;
   column: number;
-  unitPrice: string | null; // null nếu đang hold (chưa chốt giá)
+  unitPrice: string | null;
   source: 'booked' | 'hold';
 };
 
@@ -69,7 +67,7 @@ export type BookingListItem = {
   showtime: {
     id: string;
     startsAt: Date;
-    price: string; // reference price từ showtime
+    price: string;
     movie: { id: string; title: string; posterUrl: string | null };
     cinema: { id: string; name: string; city: string | null };
     room: { id: string; name: string };
@@ -84,49 +82,57 @@ export type BookingFilters = {
   showtimeId?: string;
 };
 
-// ====== Helpers ======
 async function nextBookingNumber(): Promise<string> {
-  // Tuỳ bạn thay bằng sequence/format riêng
   return 'BK' + Date.now();
 }
 
-// ====== CLEANUP holds hết hạn ======
 export async function cleanupExpiredHolds(): Promise<void> {
   await db
     .delete(bookingSeatHolds)
     .where(lt(bookingSeatHolds.expiresAt, new Date()));
 }
 
-// ====== HOLD ghế 5 phút — KHÔNG dính giá ======
 export async function holdSeats(
   input: HoldSeatsInput,
 ): Promise<HoldSeatsResult> {
-  if (!input.showtimeId) throw new BadRequestError('showtimeId is required');
+  if (!input.showtimeId) {
+    logger.warn({ input }, 'Hold seats failed: missing showtimeId');
+    throw new BadRequestError('showtimeId is required');
+  }
   if (!Array.isArray(input.seatIds) || input.seatIds.length === 0) {
+    logger.warn({ input }, 'Hold seats failed: missing seatIds');
     throw new BadRequestError('seatIds is required');
   }
 
   return db.transaction(async (tx) => {
-    // 1) dọn rác trước khi hold để tránh vướng unique
     await tx
       .delete(bookingSeatHolds)
       .where(lt(bookingSeatHolds.expiresAt, new Date()));
+    logger.debug('Expired holds cleaned before holding seats');
 
-    // 2) showtime hợp lệ & active
     const [st] = await tx
       .select({
-        id: showtimes.id,
-        roomId: showtimes.roomId,
-        isActive: showtimes.isActive,
+        id: show_times.id,
+        roomId: show_times.roomId,
+        isActive: show_times.isActive,
       })
-      .from(showtimes)
-      .where(eq(showtimes.id, input.showtimeId))
+      .from(show_times)
+      .where(eq(show_times.id, input.showtimeId))
       .limit(1);
 
-    if (!st || !st.isActive)
+    if (!st || !st.isActive) {
+      logger.error(
+        { showtimeId: input.showtimeId },
+        'Invalid or inactive showtime',
+      );
       throw new BadRequestError('Showtime not found or inactive');
+    }
 
-    // 3) seats thuộc room & active
+    logger.info(
+      { showtimeId: st.id, seatIds: input.seatIds },
+      'Processing seat hold request',
+    );
+
     const validSeats = await tx
       .select({
         id: seats.id,
@@ -149,7 +155,6 @@ export async function holdSeats(
       );
     }
 
-    // 4) ghế đã BOOKED (bảng chính)
     const booked = await tx
       .select({ seatId: bookingSeats.seatId })
       .from(bookingSeats)
@@ -159,10 +164,8 @@ export async function holdSeats(
           inArray(bookingSeats.seatId, input.seatIds),
         ),
       );
-
     if (booked.length > 0) throw new ConflictError('Some seats already booked');
 
-    // 5) ghế đang HOLD (bảng tạm, còn sống)
     const live = await tx
       .select({ seatId: bookingSeatHolds.seatId })
       .from(bookingSeatHolds)
@@ -173,10 +176,8 @@ export async function holdSeats(
           gt(bookingSeatHolds.expiresAt, new Date()),
         ),
       );
-
     if (live.length > 0) throw new ConflictError('Some seats currently held');
 
-    // 6) tạo booking header (chưa tính tiền)
     const bookingId = randomUUID();
     const bookingNumber = await nextBookingNumber();
     const expiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000);
@@ -197,18 +198,22 @@ export async function holdSeats(
       totalAmount: '0.00',
     });
 
-    // 7) ghi HOLD vào bảng tạm
-    await tx.insert(bookingSeatHolds).values(
-      validSeats.map((s) => ({
-        id: randomUUID(),
-        bookingId,
-        showtimeId: input.showtimeId,
-        seatId: s.id,
-        expiresAt,
-      })),
-    );
+    await tx
+      .insert(bookingSeatHolds)
+      .values(
+        validSeats.map((s) => ({
+          id: randomUUID(),
+          bookingId,
+          showtimeId: input.showtimeId,
+          seatId: s.id,
+          sessionId: randomUUID(),
+          expiresAt,
+        })),
+      )
+      .onDuplicateKeyUpdate({
+        set: { expiresAt },
+      });
 
-    // 8) trả info hiển thị
     const items: HoldItem[] = validSeats.map((s) => ({
       seatId: s.id,
       seatNumber: s.seatNumber,
@@ -216,6 +221,10 @@ export async function holdSeats(
       column: Number(s.column),
     }));
 
+    logger.info(
+      { bookingId, seatIds: input.seatIds },
+      'Seats successfully held',
+    );
     return {
       bookingId,
       bookingNumber,
@@ -226,17 +235,17 @@ export async function holdSeats(
   });
 }
 
-// ====== CANCEL booking: xoá HOLD tạm + set trạng thái ======
-export async function cancel(
-  bookingId: string,
-): Promise<{ id: string; status: (typeof bookings.$inferSelect)['status'] }> {
+export async function cancel(bookingId: string) {
   return db.transaction(async (tx) => {
     const [b] = await tx
       .select()
       .from(bookings)
       .where(eq(bookings.id, bookingId))
       .limit(1);
-    if (!b) throw new NotFoundError('Booking not found');
+    if (!b) {
+      logger.warn({ bookingId }, 'Cancel failed: booking not found');
+      throw new NotFoundError('Booking not found');
+    }
 
     await tx
       .delete(bookingSeatHolds)
@@ -246,30 +255,27 @@ export async function cancel(
       .set({ status: BOOKING_STATUS.CANCELLED, cancelledAt: new Date() })
       .where(eq(bookings.id, bookingId));
 
+    logger.info({ bookingId }, 'Booking cancelled successfully');
     return { id: bookingId, status: BOOKING_STATUS.CANCELLED };
   });
 }
 
-// ====== FINALIZE sau PAID: chuyển HOLD → bảng chính, xoá HOLD, tăng bookedSeats, CONFIRM booking ======
 export async function finalizeBookingSeats(
   bookingId: string,
-  unitPricePerSeat?: Record<string, string>, // nếu có pricing, truyền { seatId: "xxxxx.yy" }
-): Promise<void> {
+  unitPricePerSeat?: Record<string, string>,
+) {
   await db.transaction(async (tx) => {
     const [b] = await tx
-      .select({
-        id: bookings.id,
-        showtimeId: bookings.showtimeId,
-        status: bookings.status,
-        paymentStatus: bookings.paymentStatus,
-      })
+      .select({ id: bookings.id, showtimeId: bookings.showtimeId })
       .from(bookings)
       .where(eq(bookings.id, bookingId))
       .limit(1);
 
-    if (!b) throw new NotFoundError('Booking not found');
+    if (!b) {
+      logger.error({ bookingId }, 'Finalize failed: booking not found');
+      throw new NotFoundError('Booking not found');
+    }
 
-    // holds còn sống
     const holds = await tx
       .select({ seatId: bookingSeatHolds.seatId })
       .from(bookingSeatHolds)
@@ -281,24 +287,19 @@ export async function finalizeBookingSeats(
       );
 
     if (holds.length === 0) {
-      // idempotent: nếu đã insert booking_seats trước đó thì bỏ qua
-      const already = await tx
-        .select({ n: sql<number>`COUNT(*)` })
-        .from(bookingSeats)
-        .where(eq(bookingSeats.bookingId, bookingId));
-      if (Number(already[0]?.n ?? 0) > 0) return;
+      logger.warn({ bookingId }, 'Finalize failed: no valid holds');
       throw new ConflictError('No valid holds to finalize');
     }
 
-    // fallback: đơn giá theo showtime nếu chưa có pricing
+    logger.info({ bookingId, seats: holds.length }, 'Finalizing booking seats');
+
     const [st] = await tx
-      .select({ price: showtimes.price })
-      .from(showtimes)
-      .where(eq(showtimes.id, b.showtimeId))
+      .select({ price: show_times.price })
+      .from(show_times)
+      .where(eq(show_times.id, b.showtimeId))
       .limit(1);
     const defaultUnit = String(st?.price ?? '0.00');
 
-    // chèn booking_seats (idempotent với composite key)
     await tx
       .insert(bookingSeats)
       .values(
@@ -313,18 +314,15 @@ export async function finalizeBookingSeats(
         set: { unitPrice: sql`VALUES(unit_price)` },
       });
 
-    // xoá hold tạm
     await tx
       .delete(bookingSeatHolds)
       .where(eq(bookingSeatHolds.bookingId, bookingId));
 
-    // tăng showtimes.booked_seats
     await tx
-      .update(showtimes)
-      .set({ bookedSeats: sql`${showtimes.bookedSeats} + ${holds.length}` })
-      .where(eq(showtimes.id, b.showtimeId));
+      .update(show_times)
+      .set({ bookedSeats: sql`${show_times.bookedSeats} + ${holds.length}` })
+      .where(eq(show_times.id, b.showtimeId));
 
-    // xác nhận booking
     await tx
       .update(bookings)
       .set({
@@ -333,10 +331,10 @@ export async function finalizeBookingSeats(
         confirmedAt: new Date(),
       })
       .where(eq(bookings.id, bookingId));
+    logger.info({ bookingId }, 'Booking finalized successfully');
   });
 }
 
-// ====== LIST bookings (trả object có ý nghĩa cho UI) ======
 export async function list(
   page = 1,
   pageSize = 20,
@@ -355,7 +353,6 @@ export async function list(
       : undefined,
   );
 
-  // FLAT SELECT + INNER JOIN để loại khả năng null
   const base = await db
     .select({
       id: bookings.id,
@@ -370,9 +367,9 @@ export async function list(
       cancelledAt: bookings.cancelledAt,
       createdAt: bookings.createdAt,
 
-      st_id: showtimes.id,
-      st_startsAt: showtimes.startsAt,
-      st_price: showtimes.price,
+      st_id: show_times.id,
+      st_startsAt: show_times.startsAt,
+      st_price: show_times.price,
 
       mv_id: movies.id,
       mv_title: movies.title,
@@ -386,10 +383,10 @@ export async function list(
       rm_name: rooms.name,
     })
     .from(bookings)
-    .innerJoin(showtimes, eq(showtimes.id, bookings.showtimeId))
-    .innerJoin(movies, eq(movies.id, showtimes.movieId))
-    .innerJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
-    .innerJoin(rooms, eq(rooms.id, showtimes.roomId))
+    .innerJoin(show_times, eq(show_times.id, bookings.showtimeId))
+    .innerJoin(movies, eq(movies.id, show_times.movieId))
+    .innerJoin(cinemas, eq(cinemas.id, show_times.cinemaId))
+    .innerJoin(rooms, eq(rooms.id, show_times.roomId))
     .where(where)
     .orderBy(desc(bookings.createdAt))
     .limit(pageSize)
@@ -397,7 +394,6 @@ export async function list(
 
   const ids: string[] = base.map((b) => b.id);
 
-  // BOOKED seats: dùng innerJoin để loại null
   const booked = ids.length
     ? await db
         .select({
@@ -413,7 +409,6 @@ export async function list(
         .where(inArray(bookingSeats.bookingId, ids))
     : [];
 
-  // HOLD seats còn sống: innerJoin seats để loại null
   const now = new Date();
   const holds = ids.length
     ? await db
@@ -437,7 +432,7 @@ export async function list(
 
   const seatBookedMap = new Map<string, BookingSeatEntry[]>();
   for (const r of booked) {
-    const arr = seatBookedMap.get(r.bookingId) ?? [];
+    const arr = seatBookedMap.get(r.bookingId ?? '') ?? [];
     arr.push({
       seatId: r.seatId,
       seatNumber: r.seatNumber,
@@ -446,12 +441,12 @@ export async function list(
       unitPrice: String(r.unitPrice),
       source: 'booked',
     });
-    seatBookedMap.set(r.bookingId, arr);
+    seatBookedMap.set(r.bookingId ?? '', arr);
   }
 
   const seatHoldMap = new Map<string, BookingSeatEntry[]>();
   for (const r of holds) {
-    const arr = seatHoldMap.get(r.bookingId) ?? [];
+    const arr = seatHoldMap.get(r.bookingId ?? '') ?? [];
     arr.push({
       seatId: r.seatId,
       seatNumber: r.seatNumber,
@@ -460,7 +455,7 @@ export async function list(
       unitPrice: null,
       source: 'hold',
     });
-    seatHoldMap.set(r.bookingId, arr);
+    seatHoldMap.set(r.bookingId ?? '', arr);
   }
 
   const items: BookingListItem[] = base.map((b) => {
@@ -499,9 +494,7 @@ export async function list(
   return { items, total: Number(total) };
 }
 
-// ====== GET by id (trả nested + seats như list) ======
 export async function getById(id: string): Promise<BookingListItem> {
-  // Query trực tiếp 1 bản ghi với FLAT SELECT + INNER JOIN
   const base = await db
     .select({
       id: bookings.id,
@@ -516,9 +509,9 @@ export async function getById(id: string): Promise<BookingListItem> {
       cancelledAt: bookings.cancelledAt,
       createdAt: bookings.createdAt,
 
-      st_id: showtimes.id,
-      st_startsAt: showtimes.startsAt,
-      st_price: showtimes.price,
+      st_id: show_times.id,
+      st_startsAt: show_times.startsAt,
+      st_price: show_times.price,
 
       mv_id: movies.id,
       mv_title: movies.title,
@@ -532,17 +525,16 @@ export async function getById(id: string): Promise<BookingListItem> {
       rm_name: rooms.name,
     })
     .from(bookings)
-    .innerJoin(showtimes, eq(showtimes.id, bookings.showtimeId))
-    .innerJoin(movies, eq(movies.id, showtimes.movieId))
-    .innerJoin(cinemas, eq(cinemas.id, showtimes.cinemaId))
-    .innerJoin(rooms, eq(rooms.id, showtimes.roomId))
+    .innerJoin(show_times, eq(show_times.id, bookings.showtimeId))
+    .innerJoin(movies, eq(movies.id, show_times.movieId))
+    .innerJoin(cinemas, eq(cinemas.id, show_times.cinemaId))
+    .innerJoin(rooms, eq(rooms.id, show_times.roomId))
     .where(eq(bookings.id, id))
     .limit(1);
 
   if (!base[0]) throw new NotFoundError('Booking not found');
   const b = base[0];
 
-  // Ghế BOOKED
   const booked = await db
     .select({
       seatId: seats.id,
@@ -555,7 +547,6 @@ export async function getById(id: string): Promise<BookingListItem> {
     .innerJoin(seats, eq(seats.id, bookingSeats.seatId))
     .where(eq(bookingSeats.bookingId, id));
 
-  // Ghế HOLD còn sống
   const now = new Date();
   const holds = await db
     .select({
@@ -592,7 +583,7 @@ export async function getById(id: string): Promise<BookingListItem> {
     source: 'hold',
   }));
 
-  const seatsMerged = bookedArr.length ? bookedArr : holdArr;
+  const mergedSeats = bookedArr.length ? bookedArr : holdArr;
 
   return {
     id: b.id,
@@ -614,6 +605,6 @@ export async function getById(id: string): Promise<BookingListItem> {
       cinema: { id: b.cn_id, name: b.cn_name, city: b.cn_city },
       room: { id: b.rm_id, name: b.rm_name },
     },
-    seats: seatsMerged,
+    seats: mergedSeats,
   };
 }

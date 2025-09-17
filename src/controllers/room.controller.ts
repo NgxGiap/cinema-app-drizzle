@@ -1,10 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import * as svc from '../services/room.service';
 import { makePagination } from '../utils/http';
-
-// layout helpers lấy từ seat.service (đã thêm trước đó)
-import { previewLayout, applyLayout } from '../services/seat.service';
 import { SeatLayout } from '../types/seat-layout';
+import { previewLayout, applyLayout } from '../services/seat.service';
 
 export async function listRooms(
   req: Request,
@@ -12,22 +10,17 @@ export async function listRooms(
   next: NextFunction,
 ) {
   try {
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const pageSize = Math.min(200, Number(req.query.pageSize) || 20);
+    const page = Number(req.query.page);
+    const pageSize = Number(req.query.pageSize);
 
-    const filters: svc.RoomFilters = {};
-    if (typeof req.query.cinemaId === 'string')
-      filters.cinemaId = req.query.cinemaId;
-    if (typeof req.query.isActive === 'string')
-      filters.isActive = req.query.isActive === 'true';
-    if (typeof req.query.q === 'string' && req.query.q.trim())
-      filters.q = req.query.q.trim();
+    const filters: svc.RoomFilters = {
+      cinemaId: req.query.cinemaId as string | undefined,
+      isActive: req.query.isActive as boolean | undefined,
+      q: req.query.q as string | undefined,
+    };
 
-    const { items, total } = await svc.list(
-      page,
-      pageSize,
-      Object.keys(filters).length ? filters : undefined,
-    );
+    const { items, total } = await svc.list(page, pageSize, filters);
+
     return res.ok(
       { items, total, pagination: makePagination(page, pageSize, total) },
       'Rooms fetched',
@@ -52,18 +45,7 @@ export async function createRoom(
   next: NextFunction,
 ) {
   try {
-    const created = await svc.create({
-      cinemaId: String(req.body.cinemaId),
-      name: String(req.body.name),
-      capacity:
-        typeof req.body.capacity === 'number' ? req.body.capacity : undefined,
-      isActive:
-        typeof req.body.isActive === 'boolean' ? req.body.isActive : undefined,
-      seatingMap:
-        typeof req.body.seatingMap !== 'undefined'
-          ? req.body.seatingMap
-          : undefined,
-    });
+    const created = await svc.create(req.body);
     return res.ok(created, 'Room created');
   } catch (err) {
     next(err);
@@ -76,18 +58,7 @@ export async function updateRoom(
   next: NextFunction,
 ) {
   try {
-    const patch: svc.UpdateRoom = {};
-    if (typeof req.body.cinemaId === 'string')
-      patch.cinemaId = req.body.cinemaId;
-    if (typeof req.body.name === 'string') patch.name = req.body.name;
-    if (typeof req.body.capacity === 'number')
-      patch.capacity = req.body.capacity;
-    if (typeof req.body.isActive === 'boolean')
-      patch.isActive = req.body.isActive;
-    if (typeof req.body.seatingMap !== 'undefined')
-      patch.seatingMap = req.body.seatingMap;
-
-    const updated = await svc.update(req.params.id, patch);
+    const updated = await svc.update(req.params.id, req.body);
     return res.ok(updated, 'Room updated');
   } catch (err) {
     next(err);
@@ -119,8 +90,6 @@ export async function deleteRoom(
     next(err);
   }
 }
-
-/* ====== LAYOUT endpoints ====== */
 
 export async function previewRoomLayout(
   req: Request,

@@ -8,8 +8,8 @@ export async function listUsers(
   next: NextFunction,
 ) {
   try {
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const pageSize = Math.min(100, Number(req.query.pageSize) || 10);
+    const page = Number(req.query.page);
+    const pageSize = Number(req.query.pageSize);
     const { items, total } = await userService.list(page, pageSize);
     return res.ok(
       { items, total, pagination: makePagination(page, pageSize, total) },
@@ -20,7 +20,11 @@ export async function listUsers(
   }
 }
 
-export async function getUser(req: Request, res: Response, next: NextFunction) {
+export async function getUserById(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
   try {
     const user = await userService.getById(req.params.id);
     return user ? res.ok(user, 'User detail') : res.fail('User not found', 404);

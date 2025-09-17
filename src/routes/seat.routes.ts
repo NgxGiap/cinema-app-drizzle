@@ -2,10 +2,8 @@ import { Router } from 'express';
 import * as SeatController from '../controllers/seat.controller';
 import {
   validateSeatListQuery,
-  validateSeatMapParams,
   validateSeatIdParam,
   validateSeatCreate,
-  validateSeatCreateMany,
   validateSeatUpdate,
   handleValidationErrors,
 } from '../middlewares/validation';
@@ -29,9 +27,9 @@ router.get(
 );
 
 router.get(
-  '/rooms/:roomId/showtimes/:showtimeId/seat-map',
+  '/rooms/:roomId/show_times/:showtimeId/seat-map',
   optionalAuth,
-  validateSeatMapParams,
+
   handleValidationErrors,
   SeatController.seatMap,
 );
@@ -52,7 +50,6 @@ router.post(
   '/bulk',
   requireAuth,
   authorize(Permission.MANAGE_SEATS),
-  validateSeatCreateMany,
   handleValidationErrors,
   SeatController.createManySeats,
 );

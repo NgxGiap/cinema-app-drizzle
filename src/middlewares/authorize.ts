@@ -7,11 +7,9 @@ export const authorize =
     const user = req.user;
     if (!user) return res.fail('Unauthorized', 401);
 
-    // Get user permissions from their role
     const userPermissions =
       user.permissions || RolePermissions[user.role as Role] || [];
 
-    // Check if user has any of the required permissions
     const hasPermission = permissions.some((permission) =>
       userPermissions.includes(permission),
     );
@@ -36,7 +34,6 @@ export const allowRoles =
     next();
   };
 
-// Check if user owns the resource (for user-specific operations)
 export const requireOwnership = (
   req: Request,
   res: Response,
@@ -47,12 +44,10 @@ export const requireOwnership = (
 
   const resourceUserId = req.params.userId || req.params.id;
 
-  // Admins can access any resource
   if (user.role === Role.ADMIN) {
     return next();
   }
 
-  // Users can only access their own resources
   if (user.id !== resourceUserId) {
     return res.fail('You can only access your own resources', 403);
   }
@@ -60,7 +55,17 @@ export const requireOwnership = (
   next();
 };
 
-// Combine permissions check with ownership check
 export const authorizeWithOwnership = (...permissions: Permission[]) => {
   return [authorize(...permissions), requireOwnership];
 };
+
+export const authorizeAny =
+  (perm: Permission, isOwner: (req: Request) => boolean) =>
+  (req: Request, res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) return res.fail('Unauthorized', 401);
+    const userPermissions =
+      user.permissions || RolePermissions[user.role as Role] || [];
+    if (userPermissions.includes(perm) || isOwner(req)) return next();
+    return res.fail('Insufficient permissions', 403);
+  };

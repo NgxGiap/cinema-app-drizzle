@@ -14,10 +14,6 @@ import {
   primaryKey,
 } from 'drizzle-orm/mysql-core';
 
-/* =========================
-   ENUM CONSTANTS (UPPERCASE)
-   ========================= */
-
 export const MOVIE_STATE = {
   COMING_SOON: 'COMING_SOON',
   NOW_SHOWING: 'NOW_SHOWING',
@@ -42,6 +38,16 @@ export const PAYMENT_STATUS = {
   REFUNDED: 'REFUNDED',
 } as const;
 
+export const PAYMENT_METHOD = {
+  CARD: 'CARD',
+  CASH: 'CASH',
+  BANK_TRANSFER: 'BANK_TRANSFER',
+  VNPAY: 'VNPAY',
+  MOMO: 'MOMO',
+  STRIPE: 'STRIPE',
+  PAYPAL: 'PAYPAL',
+} as const;
+
 export const TICKET_STATUS = {
   ISSUED: 'ISSUED',
   CHECKED_IN: 'CHECKED_IN',
@@ -55,10 +61,6 @@ export const SEAT_TYPE = {
   COUPLE: 'COUPLE',
   DISABLED: 'DISABLED',
 } as const;
-
-/* =============
-   CORE TABLES
-   ============= */
 
 export const users = mysqlTable('users', {
   id: varchar('id', { length: 36 })
@@ -76,7 +78,6 @@ export const users = mysqlTable('users', {
     .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
 });
 
-/** MOVIES — lean + JSON, giống CGV nhưng gọn, dễ mở rộng */
 export const movies = mysqlTable(
   'movies',
   {
@@ -88,8 +89,8 @@ export const movies = mysqlTable(
     title: varchar('title', { length: 255 }).notNull(),
     description: text('description'),
 
-    runtimeMinutes: int('runtime_minutes').notNull(), // vd 124
-    releaseDate: datetime('release_date').notNull(), // có thể dùng DATE nếu bạn muốn
+    runtimeMinutes: int('runtime_minutes').notNull(),
+    releaseDate: datetime('release_date').notNull(),
 
     state: mysqlEnum(
       'state',
@@ -101,13 +102,12 @@ export const movies = mysqlTable(
     posterUrl: varchar('poster_url', { length: 500 }),
     trailerUrl: varchar('trailer_url', { length: 500 }),
 
-    /** danh sách dạng JSON để v1 triển khai nhanh */
-    genres: json('genres'), // string[]
-    directors: json('directors'), // string[]
-    cast: json('cast'), // { name, role? }[]
+    genres: json('genres'),
+    directors: json('directors'),
+    cast: json('cast'),
 
-    ratingCode: varchar('rating_code', { length: 10 }), // vd "T13"
-    originalLanguage: varchar('original_language', { length: 5 }), // vi, en, …
+    ratingCode: varchar('rating_code', { length: 10 }),
+    originalLanguage: varchar('original_language', { length: 5 }),
 
     createdAt: datetime('created_at')
       .notNull()
@@ -140,7 +140,6 @@ export const cinemas = mysqlTable('cinemas', {
     .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
 });
 
-/** ROOMS — phòng chiếu, kèm seating_map JSON để generate seats */
 export const rooms = mysqlTable(
   'rooms',
   {
@@ -153,7 +152,7 @@ export const rooms = mysqlTable(
     name: varchar('name', { length: 100 }).notNull(),
     capacity: int('capacity').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
-    seatingMap: json('seating_map'), // blueprint JSON (tuỳ chọn)
+    seatingMap: json('seating_map'),
     createdAt: datetime('created_at')
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -170,7 +169,6 @@ export const rooms = mysqlTable(
   }),
 );
 
-/** SEATS — gắn với room (không phải cinema) */
 export const seats = mysqlTable(
   'seats',
   {
@@ -180,7 +178,7 @@ export const seats = mysqlTable(
     roomId: varchar('room_id', { length: 36 })
       .notNull()
       .references(() => rooms.id, { onDelete: 'cascade' }),
-    seatNumber: varchar('seat_number', { length: 10 }).notNull(), // A1, B5, …
+    seatNumber: varchar('seat_number', { length: 10 }).notNull(),
     row: varchar('row', { length: 5 }).notNull(),
     column: int('column').notNull(),
     type: mysqlEnum('type', Object.values(SEAT_TYPE) as [string, ...string[]])
@@ -204,9 +202,8 @@ export const seats = mysqlTable(
   }),
 );
 
-/** SHOWTIMES — gộp thời gian: starts_at, có room_id */
-export const showtimes = mysqlTable(
-  'showtimes',
+export const show_times = mysqlTable(
+  'show_times',
   {
     id: varchar('id', { length: 36 })
       .primaryKey()
@@ -221,7 +218,7 @@ export const showtimes = mysqlTable(
       .notNull()
       .references(() => rooms.id, { onDelete: 'restrict' }),
 
-    startsAt: datetime('starts_at').notNull(), // UTC
+    startsAt: datetime('starts_at').notNull(),
     price: decimal('price', { precision: 10, scale: 2 }).notNull(),
     totalSeats: int('total_seats').notNull().default(0),
     bookedSeats: int('booked_seats').notNull().default(0),
@@ -250,7 +247,6 @@ export const showtimes = mysqlTable(
   }),
 );
 
-/** BOOKINGS — tinh gọn, không chứa PII payment/customer */
 export const bookings = mysqlTable(
   'bookings',
   {
@@ -261,7 +257,7 @@ export const bookings = mysqlTable(
     userId: varchar('user_id', { length: 36 }),
     showtimeId: varchar('showtime_id', { length: 36 })
       .notNull()
-      .references(() => showtimes.id, { onDelete: 'restrict' }),
+      .references(() => show_times.id, { onDelete: 'restrict' }),
 
     status: mysqlEnum(
       'status',
@@ -316,7 +312,6 @@ export const bookings = mysqlTable(
   }),
 );
 
-/** BOOKING_SEATS — composite PK (showtime_id, seat_id) + booking_id */
 export const bookingSeats = mysqlTable(
   'booking_seats',
   {
@@ -325,7 +320,7 @@ export const bookingSeats = mysqlTable(
       .references(() => bookings.id, { onDelete: 'cascade' }),
     showtimeId: varchar('showtime_id', { length: 36 })
       .notNull()
-      .references(() => showtimes.id, { onDelete: 'cascade' }),
+      .references(() => show_times.id, { onDelete: 'cascade' }),
     seatId: varchar('seat_id', { length: 36 })
       .notNull()
       .references(() => seats.id, { onDelete: 'restrict' }),
@@ -344,41 +339,36 @@ export const bookingSeats = mysqlTable(
   }),
 );
 
-/** BOOKING_SEAT_HOLDS — tạm giữ ghế trong thời gian ngắn */
 export const bookingSeatHolds = mysqlTable(
   'booking_seat_holds',
   {
-    id: varchar('id', { length: 36 })
-      .primaryKey()
-      .default(sql`(uuid())`),
+    id: varchar('id', { length: 36 }).primaryKey(),
 
-    bookingId: varchar('booking_id', { length: 36 })
-      .notNull()
-      .references(() => bookings.id, { onDelete: 'cascade' }),
+    bookingId: varchar('booking_id', { length: 36 }),
 
-    showtimeId: varchar('showtime_id', { length: 36 })
-      .notNull()
-      .references(() => showtimes.id, { onDelete: 'cascade' }),
+    sessionId: varchar('session_id', { length: 64 }).notNull(),
 
-    seatId: varchar('seat_id', { length: 36 })
-      .notNull()
-      .references(() => seats.id, { onDelete: 'restrict' }),
-
+    showtimeId: varchar('showtime_id', { length: 36 }).notNull(),
+    seatId: varchar('seat_id', { length: 36 }).notNull(),
     expiresAt: datetime('expires_at').notNull(),
 
+    userId: varchar('user_id', { length: 36 }),
+
     createdAt: datetime('created_at')
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: datetime('updated_at')
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
   },
-  (t) => ({
-    // mỗi suất chiếu, 1 ghế chỉ có 1 hold sống tại một thời điểm
-    uqLive: uniqueIndex('uq_hold_live').on(t.showtimeId, t.seatId),
-    idxExpires: index('idx_hold_expires').on(t.expiresAt),
-    idxBooking: index('idx_hold_booking').on(t.bookingId),
+  (table) => ({
+    uqHoldLive: uniqueIndex('uq_hold_live').on(table.showtimeId, table.seatId),
+    idxHoldSession: index('idx_hold_session').on(table.sessionId),
+    idxHoldExpires: index('idx_hold_expires').on(table.expiresAt),
+    idxHoldBooking: index('idx_hold_booking').on(table.bookingId),
   }),
 );
 
-/** PAYMENTS — chi tiết thanh toán 1:n với bookings */
 export const payments = mysqlTable(
   'payments',
   {
@@ -390,7 +380,10 @@ export const payments = mysqlTable(
       .references(() => bookings.id, { onDelete: 'cascade' }),
     amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
     currency: varchar('currency', { length: 3 }).notNull().default('VND'),
-    method: varchar('method', { length: 50 }),
+    method: mysqlEnum(
+      'method',
+      Object.values(PAYMENT_METHOD) as [string, ...string[]],
+    ),
     status: mysqlEnum(
       'status',
       Object.values(PAYMENT_STATUS) as [string, ...string[]],
@@ -414,7 +407,6 @@ export const payments = mysqlTable(
   }),
 );
 
-/** TICKETS — 1 vé / 1 ghế */
 export const tickets = mysqlTable(
   'tickets',
   {
@@ -427,7 +419,7 @@ export const tickets = mysqlTable(
       .references(() => bookings.id, { onDelete: 'cascade' }),
     showtimeId: varchar('showtime_id', { length: 36 })
       .notNull()
-      .references(() => showtimes.id, { onDelete: 'cascade' }),
+      .references(() => show_times.id, { onDelete: 'cascade' }),
     seatId: varchar('seat_id', { length: 36 })
       .notNull()
       .references(() => seats.id, { onDelete: 'restrict' }),
@@ -439,7 +431,7 @@ export const tickets = mysqlTable(
       .notNull()
       .default(TICKET_STATUS.ISSUED),
 
-    qrToken: varchar('qr_token', { length: 64 }).notNull(), // UNIQUE token
+    qrToken: varchar('qr_token', { length: 64 }).notNull(),
     issuedAt: datetime('issued_at')
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -456,7 +448,7 @@ export const tickets = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
   },
   (t) => ({
-    uqShowtimeSeat: uniqueIndex('uq_ticket_showtime_seat').on(
+    uqshow_timeseat: uniqueIndex('uq_ticket_showtime_seat').on(
       t.showtimeId,
       t.seatId,
     ),
@@ -470,19 +462,15 @@ export const tickets = mysqlTable(
   }),
 );
 
-/* =============
-   RELATIONS
-   ============= */
-
 export const cinemasRelations = relations(cinemas, ({ many }) => ({
   rooms: many(rooms),
-  showtimes: many(showtimes),
+  show_times: many(show_times),
 }));
 
 export const roomsRelations = relations(rooms, ({ one, many }) => ({
   cinema: one(cinemas, { fields: [rooms.cinemaId], references: [cinemas.id] }),
   seats: many(seats),
-  showtimes: many(showtimes),
+  show_times: many(show_times),
 }));
 
 export const seatsRelations = relations(seats, ({ one }) => ({
@@ -490,24 +478,27 @@ export const seatsRelations = relations(seats, ({ one }) => ({
 }));
 
 export const moviesRelations = relations(movies, ({ many }) => ({
-  showtimes: many(showtimes),
+  show_times: many(show_times),
 }));
 
-export const showtimesRelations = relations(showtimes, ({ one, many }) => ({
-  movie: one(movies, { fields: [showtimes.movieId], references: [movies.id] }),
+export const show_timesRelations = relations(show_times, ({ one, many }) => ({
+  movie: one(movies, {
+    fields: [show_times.movieId],
+    references: [movies.id],
+  }),
   cinema: one(cinemas, {
-    fields: [showtimes.cinemaId],
+    fields: [show_times.cinemaId],
     references: [cinemas.id],
   }),
-  room: one(rooms, { fields: [showtimes.roomId], references: [rooms.id] }),
+  room: one(rooms, { fields: [show_times.roomId], references: [rooms.id] }),
   bookings: many(bookings),
 }));
 
 export const bookingsRelations = relations(bookings, ({ one, many }) => ({
   user: one(users, { fields: [bookings.userId], references: [users.id] }),
-  showtime: one(showtimes, {
+  showtime: one(show_times, {
     fields: [bookings.showtimeId],
-    references: [showtimes.id],
+    references: [show_times.id],
   }),
   seats: many(bookingSeats),
   payments: many(payments),
@@ -519,9 +510,9 @@ export const bookingSeatsRelations = relations(bookingSeats, ({ one }) => ({
     fields: [bookingSeats.bookingId],
     references: [bookings.id],
   }),
-  showtime: one(showtimes, {
+  showtime: one(show_times, {
     fields: [bookingSeats.showtimeId],
-    references: [showtimes.id],
+    references: [show_times.id],
   }),
   seat: one(seats, { fields: [bookingSeats.seatId], references: [seats.id] }),
 }));
@@ -538,16 +529,13 @@ export const ticketsRelations = relations(tickets, ({ one }) => ({
     fields: [tickets.bookingId],
     references: [bookings.id],
   }),
-  showtime: one(showtimes, {
+  showtime: one(show_times, {
     fields: [tickets.showtimeId],
-    references: [showtimes.id],
+    references: [show_times.id],
   }),
   seat: one(seats, { fields: [tickets.seatId], references: [seats.id] }),
 }));
 
-/* =============
-   TYPES
-   ============= */
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
@@ -563,8 +551,8 @@ export type NewRoom = typeof rooms.$inferInsert;
 export type Seat = typeof seats.$inferSelect;
 export type NewSeat = typeof seats.$inferInsert;
 
-export type Showtime = typeof showtimes.$inferSelect;
-export type NewShowtime = typeof showtimes.$inferInsert;
+export type Showtime = typeof show_times.$inferSelect;
+export type NewShowtime = typeof show_times.$inferInsert;
 
 export type Booking = typeof bookings.$inferSelect;
 export type NewBooking = typeof bookings.$inferInsert;

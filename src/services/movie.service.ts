@@ -1,21 +1,19 @@
 import { randomUUID } from 'crypto';
 import { and, asc, count, eq, like, gte, lte, SQL } from 'drizzle-orm';
 import { db } from '../db';
-import { movies } from '../db/schema';
-import {
-  ConflictError,
-  NotFoundError,
-  ValidationError,
-} from '../utils/errors/base';
+import { movies, MOVIE_STATE } from '../db/schema';
+import { ConflictError, NotFoundError } from '../utils/errors/base';
 
-export type MovieState = 'COMING_SOON' | 'NOW_SHOWING' | 'ENDED';
+export type MovieState = keyof typeof MOVIE_STATE;
+
+export type CastItem = { name: string; role?: string | undefined };
 
 export type MovieListItem = {
   id: string;
   slug: string;
   title: string;
   state: MovieState;
-  releaseDate: Date | null;
+  releaseDate: Date;
   posterUrl: string | null;
   runtimeMinutes: number;
   genres: string[];
@@ -25,7 +23,7 @@ export type MovieDetail = MovieListItem & {
   description: string | null;
   trailerUrl: string | null;
   directors: string[];
-  cast: string[];
+  cast: CastItem[];
   ratingCode: string | null;
   originalLanguage: string | null;
   createdAt: Date;
@@ -35,55 +33,69 @@ export type MovieDetail = MovieListItem & {
 export type MovieFilters = {
   q?: string;
   state?: MovieState;
-  fromReleaseDate?: Date;
-  toReleaseDate?: Date;
+  fromReleaseDate?: Date | undefined;
+  toReleaseDate?: Date | undefined;
 };
 
 export type CreateMovieInput = {
   slug: string;
   title: string;
   description?: string;
-  runtimeMinutes?: number;
-  releaseDate?: Date | null;
-  state?: MovieState;
-  posterUrl?: string | null;
-  trailerUrl?: string | null;
-  genres?: string[]; // hoặc CSV sẽ parse ở service
+  runtimeMinutes: number;
+  releaseDate: Date;
+  state: MovieState;
+  posterUrl?: string;
+  trailerUrl?: string;
+  genres?: string[];
   directors?: string[];
-  cast?: string[];
-  ratingCode?: string | null;
-  originalLanguage?: string | null;
+  cast?: CastItem[];
+  ratingCode?: string;
+  originalLanguage?: string;
 };
 
 export type UpdateMovieInput = Partial<CreateMovieInput>;
 
-/* ----------------- helpers ----------------- */
-
-function normalizeState(v: unknown): MovieState | undefined {
-  if (typeof v !== 'string') return undefined;
-  const up = v.toUpperCase();
-  if (up === 'COMING_SOON' || up === 'NOW_SHOWING' || up === 'ENDED')
-    return up as MovieState;
-  return undefined;
+function createCastItem(name: string, role?: string): CastItem {
+  const result: CastItem = { name };
+  if (role !== undefined && role.length > 0) {
+    result.role = role;
+  }
+  return result;
 }
 
-function toStringArray(v: unknown): string[] | undefined {
-  if (Array.isArray(v)) {
-    return v
-      .map(String)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+function jsonToCastArray(dbValue: unknown): CastItem[] {
+  if (dbValue == null) return [];
+
+  if (Array.isArray(dbValue)) {
+    return dbValue
+      .map((item) => {
+        if (typeof item === 'string') {
+          return createCastItem(item.trim());
+        }
+        if (typeof item === 'object' && item !== null && 'name' in item) {
+          const castItem = item as Record<string, unknown>;
+          const name = String(castItem.name).trim();
+          const role = castItem.role ? String(castItem.role).trim() : undefined;
+          return createCastItem(name, role);
+        }
+        return createCastItem(String(item).trim());
+      })
+      .filter((item) => item.name.length > 0);
   }
-  if (typeof v === 'string') {
-    return v
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+
+  if (typeof dbValue === 'string') {
+    try {
+      const parsed = JSON.parse(dbValue);
+      return jsonToCastArray(parsed);
+    } catch {
+      const name = dbValue.trim();
+      return name.length > 0 ? [createCastItem(name)] : [];
+    }
   }
-  return undefined;
+
+  return [];
 }
 
-/** Parse giá trị JSON lấy từ DB thành string[] an toàn (không dùng any) */
 function jsonToStringArray(dbValue: unknown): string[] {
   if (dbValue == null) return [];
   if (Array.isArray(dbValue)) {
@@ -102,17 +114,7 @@ function jsonToStringArray(dbValue: unknown): string[] {
           .filter((s) => s.length > 0);
       }
     } catch {
-      // ignore invalid JSON
-    }
-  }
-  if (typeof dbValue === 'object') {
-    // MySQL driver có thể trả về object đã parse sẵn
-    const maybeArr = dbValue as unknown;
-    if (Array.isArray(maybeArr)) {
-      return maybeArr
-        .map(String)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+      return [];
     }
   }
   return [];
@@ -121,20 +123,19 @@ function jsonToStringArray(dbValue: unknown): string[] {
 function whereFromFilters(filters?: MovieFilters): SQL<unknown> | undefined {
   if (!filters) return undefined;
   const clauses: SQL<unknown>[] = [];
+
   if (filters.q) {
     const pattern = `%${filters.q}%`;
     clauses.push(like(movies.title, pattern));
-    // Tăng độ bao phủ: tìm theo slug (dùng AND+LIKE 2 lần sẽ thu hẹp, nên dùng thêm logic ở list)
   }
   if (filters.state) clauses.push(eq(movies.state, filters.state));
   if (filters.fromReleaseDate)
     clauses.push(gte(movies.releaseDate, filters.fromReleaseDate));
   if (filters.toReleaseDate)
     clauses.push(lte(movies.releaseDate, filters.toReleaseDate));
+
   return clauses.length ? and(...clauses) : undefined;
 }
-
-/* ----------------- services ----------------- */
 
 export async function list(
   page = 1,
@@ -171,27 +172,17 @@ export async function list(
     slug: r.slug,
     title: r.title,
     state: r.state as MovieState,
-    releaseDate: r.releaseDate ?? null,
+    releaseDate: r.releaseDate!,
     posterUrl: r.posterUrl ?? null,
     runtimeMinutes: r.runtimeMinutes,
     genres: jsonToStringArray(r.genres),
   }));
 
-  // nếu có filter.q, bổ sung lọc theo slug ở client-level (đỡ ghép OR phức tạp)
-  const filtered = filters?.q
-    ? items.filter(
-        (m) =>
-          m.title.toLowerCase().includes(filters.q!.toLowerCase()) ||
-          m.slug.toLowerCase().includes(filters.q!.toLowerCase()),
-      )
-    : items;
-
-  return { items: filtered, total: Number(total) };
+  return { items, total: Number(total) };
 }
 
 export async function getById(id: string): Promise<MovieDetail> {
   const [r] = await db.select().from(movies).where(eq(movies.id, id)).limit(1);
-
   if (!r) throw new NotFoundError('Movie not found');
 
   return {
@@ -199,14 +190,14 @@ export async function getById(id: string): Promise<MovieDetail> {
     slug: r.slug,
     title: r.title,
     state: r.state as MovieState,
-    releaseDate: r.releaseDate ?? null,
+    releaseDate: r.releaseDate!,
     posterUrl: r.posterUrl ?? null,
     runtimeMinutes: r.runtimeMinutes,
     genres: jsonToStringArray(r.genres),
     description: r.description ?? null,
     trailerUrl: r.trailerUrl ?? null,
     directors: jsonToStringArray(r.directors),
-    cast: jsonToStringArray(r.cast),
+    cast: jsonToCastArray(r.cast),
     ratingCode: r.ratingCode ?? null,
     originalLanguage: r.originalLanguage ?? null,
     createdAt: r.createdAt,
@@ -221,29 +212,11 @@ export async function getBySlug(slug: string): Promise<MovieDetail> {
     .where(eq(movies.slug, slug))
     .limit(1);
   if (!r) throw new NotFoundError('Movie not found');
-  return {
-    id: r.id,
-    slug: r.slug,
-    title: r.title,
-    state: r.state as MovieState,
-    releaseDate: r.releaseDate ?? null,
-    posterUrl: r.posterUrl ?? null,
-    runtimeMinutes: r.runtimeMinutes,
-    genres: jsonToStringArray(r.genres),
-    description: r.description ?? null,
-    trailerUrl: r.trailerUrl ?? null,
-    directors: jsonToStringArray(r.directors),
-    cast: jsonToStringArray(r.cast),
-    ratingCode: r.ratingCode ?? null,
-    originalLanguage: r.originalLanguage ?? null,
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  };
+
+  return getById(r.id);
 }
 
 export async function create(input: CreateMovieInput): Promise<MovieDetail> {
-  if (!input.slug || !input.title)
-    throw new ValidationError('slug and title are required');
   const [dup] = await db
     .select({ id: movies.id })
     .from(movies)
@@ -251,32 +224,26 @@ export async function create(input: CreateMovieInput): Promise<MovieDetail> {
     .limit(1);
   if (dup) throw new ConflictError('Slug already exists');
 
-  const state = normalizeState(input.state) ?? 'COMING_SOON';
   const id = randomUUID();
 
-  const toInsert: Partial<typeof movies.$inferInsert> = {
+  const toInsert: typeof movies.$inferInsert = {
     id,
     slug: input.slug,
     title: input.title,
     description: input.description ?? null,
-    runtimeMinutes:
-      typeof input.runtimeMinutes === 'number' ? input.runtimeMinutes : 0,
-    state,
+    runtimeMinutes: input.runtimeMinutes,
+    releaseDate: input.releaseDate,
+    state: input.state,
     posterUrl: input.posterUrl ?? null,
     trailerUrl: input.trailerUrl ?? null,
-    genres: JSON.stringify(toStringArray(input.genres) ?? []),
-    directors: JSON.stringify(toStringArray(input.directors) ?? []),
-    cast: JSON.stringify(toStringArray(input.cast) ?? []),
+    genres: JSON.stringify(input.genres ?? []),
+    directors: JSON.stringify(input.directors ?? []),
+    cast: JSON.stringify(input.cast ?? []),
     ratingCode: input.ratingCode ?? null,
     originalLanguage: input.originalLanguage ?? null,
   };
 
-  // ✅ chỉ set khi có Date hợp lệ
-  if (input.releaseDate instanceof Date && !Number.isNaN(+input.releaseDate)) {
-    toInsert.releaseDate = input.releaseDate;
-  }
-
-  await db.insert(movies).values(toInsert as typeof movies.$inferInsert);
+  await db.insert(movies).values(toInsert);
   return getById(id);
 }
 
@@ -293,7 +260,7 @@ export async function update(
 
   const data: Partial<typeof movies.$inferInsert> = {};
 
-  if (typeof patch.slug === 'string' && patch.slug !== existing.slug) {
+  if (patch.slug && patch.slug !== existing.slug) {
     const [dup] = await db
       .select({ id: movies.id })
       .from(movies)
@@ -302,37 +269,27 @@ export async function update(
     if (dup) throw new ConflictError('Slug already exists');
     data.slug = patch.slug;
   }
-  if (typeof patch.title === 'string') data.title = patch.title;
-  if (typeof patch.description === 'string')
-    data.description = patch.description;
-  if (typeof patch.runtimeMinutes === 'number')
+
+  if (patch.title !== undefined) data.title = patch.title;
+  if (patch.description !== undefined) data.description = patch.description;
+  if (patch.runtimeMinutes !== undefined)
     data.runtimeMinutes = patch.runtimeMinutes;
-  if (patch.releaseDate instanceof Date && !Number.isNaN(+patch.releaseDate))
-    data.releaseDate = patch.releaseDate;
-
-  const state = normalizeState(patch.state);
-  if (state) data.state = state;
-
-  if (typeof patch.posterUrl === 'string') data.posterUrl = patch.posterUrl;
-  if (typeof patch.trailerUrl === 'string') data.trailerUrl = patch.trailerUrl;
-
-  const g = toStringArray(patch.genres);
-  if (typeof g !== 'undefined') data.genres = JSON.stringify(g);
-
-  const d = toStringArray(patch.directors);
-  if (typeof d !== 'undefined') data.directors = JSON.stringify(d);
-
-  const c = toStringArray(patch.cast);
-  if (typeof c !== 'undefined') data.cast = JSON.stringify(c);
-
-  if (typeof patch.ratingCode === 'string') data.ratingCode = patch.ratingCode;
-  if (typeof patch.originalLanguage === 'string')
+  if (patch.releaseDate !== undefined) data.releaseDate = patch.releaseDate;
+  if (patch.state !== undefined) data.state = patch.state;
+  if (patch.posterUrl !== undefined) data.posterUrl = patch.posterUrl;
+  if (patch.trailerUrl !== undefined) data.trailerUrl = patch.trailerUrl;
+  if (patch.genres !== undefined) data.genres = JSON.stringify(patch.genres);
+  if (patch.directors !== undefined)
+    data.directors = JSON.stringify(patch.directors);
+  if (patch.cast !== undefined) data.cast = JSON.stringify(patch.cast);
+  if (patch.ratingCode !== undefined) data.ratingCode = patch.ratingCode;
+  if (patch.originalLanguage !== undefined)
     data.originalLanguage = patch.originalLanguage;
 
   if (Object.keys(data).length === 0) return getById(id);
 
   await db.update(movies).set(data).where(eq(movies.id, id));
-  return getById(id); // ✅
+  return getById(id);
 }
 
 export async function remove(id: string): Promise<{ id: string }> {

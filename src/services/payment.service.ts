@@ -56,8 +56,6 @@ export type WebhookUpdateInput = {
   processedAt?: Date;
 };
 
-/* -------- helpers -------- */
-
 function validateAmountString(s: string): void {
   if (!/^\d+(\.\d{1,2})?$/.test(s))
     throw new ValidationError('Invalid amount format');
@@ -73,11 +71,6 @@ async function getBookingOrThrow(id: string) {
   return b;
 }
 
-/* -------- services -------- */
-
-/** Tạo payment intent (PENDING/PROCESSING) gắn với 1 booking.
- *  Idempotency theo transactionId (nếu cung cấp).
- */
 export async function createIntent(
   input: CreateIntentInput,
 ): Promise<PaymentItem> {
@@ -93,7 +86,6 @@ export async function createIntent(
   validateAmountString(amount);
   const currency = input.currency ?? b.currency ?? 'VND';
 
-  // Nếu đã có transactionId, kiểm tra trùng
   if (input.transactionId) {
     const [exist] = await db
       .select({ id: payments.id })
@@ -135,10 +127,6 @@ export async function createIntent(
   return item;
 }
 
-/** Cập nhật payment theo webhook/return từ cổng.
- *  - Ưu tiên locate theo transactionId; nếu không có, lấy payment mới nhất của bookingId.
- *  - Khi status = PAID ⇒ cập nhật bookings + issue tickets (idempotent).
- */
 export async function updateByWebhook(
   input: WebhookUpdateInput,
 ): Promise<void> {
@@ -146,7 +134,6 @@ export async function updateByWebhook(
     throw new ValidationError('transactionId or bookingId is required');
   }
 
-  // 1) Locate payment
   let paymentRow:
     | { id: string; bookingId: string; status: PaymentStatus }
     | undefined;
@@ -167,7 +154,7 @@ export async function updateByWebhook(
         id: p.id,
         bookingId: p.bookingId,
         status: p.status as PaymentStatus,
-      }; // ✅ cast hẹp
+      };
   } else {
     const [p] = await db
       .select({
@@ -185,12 +172,11 @@ export async function updateByWebhook(
         id: p.id,
         bookingId: p.bookingId,
         status: p.status as PaymentStatus,
-      }; // ✅ cast hẹp
+      };
   }
 
   if (!paymentRow) throw new NotFoundError('Payment not found');
 
-  // 2) Update payment row
   const updates: Partial<typeof payments.$inferInsert> = {};
   updates.status = input.status;
   if (typeof input.failedReason === 'string')
@@ -213,11 +199,9 @@ export async function updateByWebhook(
 
   await db.update(payments).set(updates).where(eq(payments.id, paymentRow.id));
 
-  // 3) Side-effects theo status
   if (input.status === 'PAID') {
     await bookingSvc.finalizeBookingSeats(paymentRow.bookingId);
   } else if (input.status === 'FAILED') {
-    // Optional: mark booking.paymentStatus FAILED
     await db
       .update(bookings)
       .set({ paymentStatus: 'FAILED' })

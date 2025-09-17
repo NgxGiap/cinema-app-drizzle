@@ -51,7 +51,7 @@ CREATE TABLE `payments` (
 ALTER TABLE `cinemas` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-26 17:28:41.675';--> statement-breakpoint
 ALTER TABLE `movies` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-26 17:28:41.675';--> statement-breakpoint
 ALTER TABLE `seats` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-26 17:28:41.676';--> statement-breakpoint
-ALTER TABLE `showtimes` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-26 17:28:41.676';--> statement-breakpoint
+ALTER TABLE `show_times` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-26 17:28:41.676';--> statement-breakpoint
 ALTER TABLE `users` MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT '2025-08-26 17:28:41.674';--> statement-breakpoint
 CREATE INDEX `idx_bookingSeat_booking` ON `booking_seats` (`booking_id`);--> statement-breakpoint
 CREATE INDEX `idx_bookingSeat_seat` ON `booking_seats` (`seat_id`);

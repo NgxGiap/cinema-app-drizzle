@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "bca1d946-f083-4863-8a82-e8000ecdabf9",
-  "prevId": "cc449799-514a-4bcf-9691-b069653be679",
+  "id": "5e88dbaa-1ebe-435b-a12f-d731fe5e692e",
+  "prevId": "bca1d946-f083-4863-8a82-e8000ecdabf9",
   "tables": {
     "booking_seat_holds": {
       "name": "booking_seat_holds",
@@ -12,12 +12,18 @@
           "type": "varchar(36)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "(uuid())"
+          "autoincrement": false
         },
         "booking_id": {
           "name": "booking_id",
           "type": "varchar(36)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -43,8 +49,23 @@
           "notNull": true,
           "autoincrement": false
         },
+        "user_id": {
+          "name": "user_id",
+          "type": "varchar(36)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
           "type": "datetime",
           "primaryKey": false,
           "notNull": true,
@@ -61,6 +82,13 @@
           ],
           "isUnique": true
         },
+        "idx_hold_session": {
+          "name": "idx_hold_session",
+          "columns": [
+            "session_id"
+          ],
+          "isUnique": false
+        },
         "idx_hold_expires": {
           "name": "idx_hold_expires",
           "columns": [
@@ -76,47 +104,7 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {
-        "booking_seat_holds_booking_id_bookings_id_fk": {
-          "name": "booking_seat_holds_booking_id_bookings_id_fk",
-          "tableFrom": "booking_seat_holds",
-          "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "booking_seat_holds_showtime_id_show_times_id_fk": {
-          "name": "booking_seat_holds_showtime_id_show_times_id_fk",
-          "tableFrom": "booking_seat_holds",
-          "tableTo": "show_times",
-          "columnsFrom": [
-            "showtime_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "booking_seat_holds_seat_id_seats_id_fk": {
-          "name": "booking_seat_holds_seat_id_seats_id_fk",
-          "tableFrom": "booking_seat_holds",
-          "tableTo": "seats",
-          "columnsFrom": [
-            "seat_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {
         "booking_seat_holds_id": {
           "name": "booking_seat_holds_id",
@@ -722,7 +710,7 @@
         },
         "method": {
           "name": "method",
-          "type": "varchar(50)",
+          "type": "enum('CARD','CASH','BANK_TRANSFER','VNPAY','MOMO','STRIPE','PAYPAL')",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

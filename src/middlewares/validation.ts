@@ -1,426 +1,6 @@
+import { MOVIE_STATE, SEAT_TYPE } from '../db/schema';
 import { Request, Response, NextFunction } from 'express';
 import { body, param, query, validationResult } from 'express-validator';
-
-export const handleValidationErrors = (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.fail('Validation failed', 400, errors.array());
-  }
-  next();
-};
-
-export const validateLogin = [
-  body('email').isEmail().withMessage('Valid email required'),
-  body('password').notEmpty().withMessage('Password is required'),
-  handleValidationErrors,
-];
-
-export const validateRegister = [
-  body('name').notEmpty().withMessage('Name is required'),
-  body('email').isEmail().withMessage('Valid email required'),
-  body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters'),
-  body('role')
-    .optional()
-    .isIn(['admin', 'manager', 'staff', 'user'])
-    .withMessage('Invalid role'),
-  handleValidationErrors,
-];
-
-const movieStateEnum = [
-  'COMING_SOON',
-  'NOW_SHOWING',
-  'ENDED',
-  'coming_soon',
-  'now_showing',
-  'ended',
-] as const;
-
-export const validateMovieListQuery = [
-  query('q').optional().isString().trim().isLength({ min: 1, max: 100 }),
-  query('state').optional().isIn(movieStateEnum),
-  query('fromReleaseDate').optional().isISO8601(),
-  query('toReleaseDate').optional().isISO8601(),
-];
-
-export const validateMovieCreate = [
-  body('slug').isString().trim().isLength({ min: 1, max: 150 }),
-  body('title').isString().trim().isLength({ min: 1, max: 250 }),
-  body('description')
-    .optional()
-    .isString()
-    .trim()
-    .isLength({ min: 1 })
-    .isLength({ max: 5000 }),
-  body('runtimeMinutes').optional().isInt({ min: 0 }).toInt(),
-  body('releaseDate').optional().isISO8601(),
-  body('state').optional().isIn(movieStateEnum),
-  body('posterUrl').optional().isURL(),
-  body('trailerUrl').optional().isURL(),
-
-  // genres/directors/cast: cho phép string[] hoặc string CSV
-  body('genres')
-    .optional()
-    .custom((v) => Array.isArray(v) || typeof v === 'string'),
-  body('directors')
-    .optional()
-    .custom((v) => Array.isArray(v) || typeof v === 'string'),
-  body('cast')
-    .optional()
-    .custom((v) => Array.isArray(v) || typeof v === 'string'),
-
-  body('ratingCode').optional().isString().trim().isLength({ min: 1, max: 10 }),
-  body('originalLanguage')
-    .optional()
-    .isString()
-    .trim()
-    .isLength({ min: 2, max: 10 }),
-];
-
-export const validateMovieUpdate = [
-  body('slug').optional().isString().trim().isLength({ min: 1, max: 150 }),
-  body('title').optional().isString().trim().isLength({ min: 1, max: 250 }),
-  body('description')
-    .optional()
-    .isString()
-    .trim()
-    .isLength({ min: 1 })
-    .isLength({ max: 5000 }),
-  body('runtimeMinutes').optional().isInt({ min: 0 }).toInt(),
-  body('releaseDate').optional().isISO8601(),
-  body('state').optional().isIn(movieStateEnum),
-  body('posterUrl').optional().isURL(),
-  body('trailerUrl').optional().isURL(),
-  body('genres')
-    .optional()
-    .custom((v) => Array.isArray(v) || typeof v === 'string'),
-  body('directors')
-    .optional()
-    .custom((v) => Array.isArray(v) || typeof v === 'string'),
-  body('cast')
-    .optional()
-    .custom((v) => Array.isArray(v) || typeof v === 'string'),
-  body('ratingCode').optional().isString().trim().isLength({ min: 1, max: 10 }),
-  body('originalLanguage')
-    .optional()
-    .isString()
-    .trim()
-    .isLength({ min: 2, max: 10 }),
-];
-
-export const validateSlugParam = [
-  param('slug').isString().trim().isLength({ min: 1 }),
-];
-
-/** GET /cinemas?city=&isActive=&q=&page=&pageSize= */
-export const validateCinemaListQuery = [
-  query('city').optional().isString().trim().isLength({ min: 1 }),
-  query('isActive').optional().isBoolean().toBoolean(),
-  query('q').optional().isString().trim().isLength({ min: 1, max: 100 }),
-];
-
-/** POST /cinemas */
-export const validateCinemaCreate = [
-  body('name').isString().trim().isLength({ min: 1, max: 150 }),
-  body('address').isString().trim().isLength({ min: 1, max: 250 }),
-  body('city').isString().trim().isLength({ min: 1, max: 100 }),
-  body('phone').optional().isString().trim().isLength({ min: 3, max: 50 }),
-  body('email').optional().isEmail(),
-  body('isActive').optional().isBoolean().toBoolean(),
-];
-
-/** PUT /cinemas/:id */
-export const validateCinemaUpdate = [
-  body('name').optional().isString().trim().isLength({ min: 1, max: 150 }),
-  body('address').optional().isString().trim().isLength({ min: 1, max: 250 }),
-  body('city').optional().isString().trim().isLength({ min: 1, max: 100 }),
-  body('phone').optional().isString().trim().isLength({ min: 3, max: 50 }),
-  body('email').optional().isEmail(),
-  body('isActive').optional().isBoolean().toBoolean(),
-];
-
-const seatTypeEnum = [
-  'REGULAR',
-  'VIP',
-  'COUPLE',
-  'DISABLED',
-  'regular',
-  'vip',
-  'couple',
-  'disabled',
-] as const;
-
-/** GET /seats?roomId=&row=&type=&isActive=&q=&page=&pageSize= */
-export const validateSeatListQuery = [
-  query('roomId').optional().isString().trim().isLength({ min: 1 }),
-  query('row').optional().isString().trim().isLength({ min: 1, max: 5 }),
-  query('type').optional().isIn(seatTypeEnum),
-  query('isActive')
-    .optional()
-    .isBoolean()
-    .withMessage('isActive must be boolean')
-    .toBoolean(),
-  query('q').optional().isString().trim().isLength({ min: 1, max: 50 }),
-  query('page').optional().isInt({ min: 1 }).toInt(),
-  query('pageSize').optional().isInt({ min: 1, max: 200 }).toInt(),
-];
-
-/** GET /seats/rooms/:roomId/showtimes/:showtimeId/seat-map */
-export const validateSeatMapParams = [
-  param('roomId').isString().trim().isLength({ min: 1 }),
-  param('showtimeId').isString().trim().isLength({ min: 1 }),
-];
-
-/** Param :id cho get/update/delete */
-export const validateSeatIdParam = [
-  param('id').isString().trim().isLength({ min: 1 }),
-];
-
-/** POST /seats */
-export const validateSeatCreate = [
-  body('roomId')
-    .isString()
-    .trim()
-    .isLength({ min: 1 })
-    .withMessage('roomId is required'),
-  body('seatNumber').isString().trim().isLength({ min: 1, max: 10 }),
-  body('row').isString().trim().isLength({ min: 1, max: 5 }),
-  body('column').isInt({ min: 1 }).withMessage('column must be >= 1').toInt(),
-  body('type').optional().isIn(seatTypeEnum),
-  body('price')
-    .isString()
-    .trim()
-    .matches(/^\d+(\.\d{1,2})?$/)
-    .withMessage('price must be a decimal string (e.g., "90000.00")'),
-  body('isActive').optional().isBoolean().toBoolean(),
-];
-
-/** POST /seats/bulk  { items: NewSeat[] } */
-export const validateSeatCreateMany = [
-  body('items').isArray({ min: 1 }),
-  body('items.*.roomId').isString().trim().isLength({ min: 1 }),
-  body('items.*.seatNumber').isString().trim().isLength({ min: 1, max: 10 }),
-  body('items.*.row').isString().trim().isLength({ min: 1, max: 5 }),
-  body('items.*.column').isInt({ min: 1 }).toInt(),
-  body('items.*.type').optional().isIn(seatTypeEnum),
-  body('items.*.price')
-    .isString()
-    .trim()
-    .matches(/^\d+(\.\d{1,2})?$/),
-  body('items.*.isActive').optional().isBoolean().toBoolean(),
-];
-
-/** PUT /seats/:id */
-export const validateSeatUpdate = [
-  body('roomId').optional().isString().trim().isLength({ min: 1 }),
-  body('seatNumber').optional().isString().trim().isLength({ min: 1, max: 10 }),
-  body('row').optional().isString().trim().isLength({ min: 1, max: 5 }),
-  body('column').optional().isInt({ min: 1 }).toInt(),
-  body('type').optional().isIn(seatTypeEnum),
-  body('price')
-    .optional()
-    .isString()
-    .trim()
-    .matches(/^\d+(\.\d{1,2})?$/),
-  body('isActive').optional().isBoolean().toBoolean(),
-];
-
-export const validateIdParam = [
-  param('id').isString().trim().isLength({ min: 1 }),
-];
-
-/** GET /showtimes?cinemaId=&movieId=&roomId=&from=&to=&isActive= */
-export const validateShowtimeListQuery = [
-  query('cinemaId').optional().isString().trim().isLength({ min: 1 }),
-  query('movieId').optional().isString().trim().isLength({ min: 1 }),
-  query('roomId').optional().isString().trim().isLength({ min: 1 }),
-  query('from').optional().isISO8601(),
-  query('to').optional().isISO8601(),
-  query('isActive').optional().isBoolean().toBoolean(),
-];
-
-export const validateUserCreation = [
-  body('name').notEmpty().withMessage('Name is required'),
-  body('email').isEmail().withMessage('Valid email required'),
-  body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters'),
-  body('role')
-    .optional()
-    .isIn(['admin', 'manager', 'staff', 'user'])
-    .withMessage('Invalid role'),
-  handleValidationErrors,
-];
-
-export const validatePagination = [
-  query('page')
-    .optional()
-    .isInt({ min: 1 })
-    .withMessage('Page must be a positive integer'),
-  query('pageSize')
-    .optional()
-    .isInt({ min: 1, max: 100 })
-    .withMessage('Page size must be between 1 and 100'),
-  handleValidationErrors,
-];
-
-export const validateShowtimeCreation = [
-  body('movieId').isString().trim().isLength({ min: 1 }),
-  body('cinemaId').isString().trim().isLength({ min: 1 }),
-  body('roomId').optional().isString().trim().isLength({ min: 1 }),
-  body('price')
-    .isString()
-    .trim()
-    .matches(/^\d+(\.\d{1,2})?$/),
-  body('isActive').optional().isBoolean().toBoolean(),
-
-  body().custom((val) => {
-    const hasStartsAt = typeof val?.startsAt === 'string';
-    const hasPair =
-      typeof val?.showDate === 'string' && typeof val?.showTime === 'string';
-    if (!hasStartsAt && !hasPair) {
-      throw new Error('Provide startsAt (ISO) or showDate + showTime');
-    }
-    return true;
-  }),
-];
-
-/** PUT /showtimes/:id */
-export const validateShowtimeUpdate = [
-  body('movieId').optional().isString().trim().isLength({ min: 1 }),
-  body('cinemaId').optional().isString().trim().isLength({ min: 1 }),
-  body('roomId').optional().isString().trim().isLength({ min: 1 }),
-  body('price')
-    .optional()
-    .isString()
-    .trim()
-    .matches(/^\d+(\.\d{1,2})?$/),
-  body('isActive').optional().isBoolean().toBoolean(),
-  body('startsAt').optional().isISO8601(),
-  // cũng cho phép cặp showDate/showTime như compat
-  body('showDate').optional().isISO8601(),
-  body('showTime')
-    .optional()
-    .matches(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
-];
-
-/** Rooms */
-export const validateRoomListQuery = [
-  query('cinemaId').optional().isString().trim().isLength({ min: 1 }),
-  query('isActive').optional().isBoolean().toBoolean(),
-  query('q').optional().isString().trim().isLength({ min: 1, max: 100 }),
-];
-
-export const validateRoomCreate = [
-  body('cinemaId').isString().trim().isLength({ min: 1 }),
-  body('name').isString().trim().isLength({ min: 1, max: 120 }),
-  body('capacity').optional().isInt({ min: 0 }).toInt(),
-  body('isActive').optional().isBoolean().toBoolean(),
-  body('seatingMap')
-    .optional()
-    .custom((v) => typeof v === 'object' && v !== null),
-];
-
-export const validateRoomUpdate = [
-  body('cinemaId').optional().isString().trim().isLength({ min: 1 }),
-  body('name').optional().isString().trim().isLength({ min: 1, max: 120 }),
-  body('capacity').optional().isInt({ min: 0 }).toInt(),
-  body('isActive').optional().isBoolean().toBoolean(),
-  body('seatingMap')
-    .optional()
-    .custom((v) => typeof v === 'object' || v === null),
-];
-
-/** Seat layout (preview/apply) – validate tối thiểu */
-export const validateSeatLayout = [
-  body('defaultPrice').isString().trim().isLength({ min: 1 }),
-  body('blocks').isArray({ min: 1 }),
-];
-
-export const validateBookingCreation = [
-  body('showtimeId')
-    .notEmpty()
-    .withMessage('Showtime ID is required')
-    .isUUID()
-    .withMessage('Valid showtime ID required'),
-  body('seatIds')
-    .isArray({ min: 1, max: 8 })
-    .withMessage('seatIds must be an array with 1-8 seats')
-    .custom((seatIds) => {
-      // Check if all elements are valid UUIDs
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (!seatIds.every((id: string) => uuidRegex.test(id))) {
-        throw new Error('All seat IDs must be valid UUIDs');
-      }
-      // Check for duplicates
-      if (new Set(seatIds).size !== seatIds.length) {
-        throw new Error('Duplicate seat IDs are not allowed');
-      }
-      return true;
-    }),
-  body('customerName')
-    .notEmpty()
-    .withMessage('Customer name is required')
-    .isLength({ min: 2, max: 100 })
-    .withMessage('Customer name must be between 2-100 characters'),
-  body('customerEmail')
-    .notEmpty()
-    .withMessage('Customer email is required')
-    .isEmail()
-    .withMessage('Valid email address required'),
-  body('customerPhone')
-    .optional()
-    .matches(/^[\+]?[0-9\s\-\(\)]{10,20}$/)
-    .withMessage('Invalid phone number format'),
-  body('notes')
-    .optional()
-    .isLength({ max: 500 })
-    .withMessage('Notes must not exceed 500 characters'),
-  handleValidationErrors,
-];
-
-function bodyHasSeatIds(val: unknown): boolean {
-  if (!val || typeof val !== 'object') return false;
-  const x = (val as Record<string, unknown>).seatIds;
-  return (
-    Array.isArray(x) &&
-    x.length > 0 &&
-    x.every((v: unknown) => typeof v === 'string' && v.trim().length > 0)
-  );
-}
-
-function bodyHasSeatsArray(val: unknown): boolean {
-  if (!val || typeof val !== 'object') return false;
-  const x = (val as Record<string, unknown>).seats;
-  if (!Array.isArray(x) || x.length === 0) return false;
-  return x.every((v: unknown) => {
-    if (!v || typeof v !== 'object') return false;
-    const sid = (v as Record<string, unknown>).seatId;
-    return typeof sid === 'string' && sid.trim().length > 0;
-  });
-}
-
-/** Validation cho POST /bookings/hold */
-export const validateBookingHold = [
-  body('showtimeId')
-    .isString()
-    .trim()
-    .notEmpty()
-    .withMessage('showtimeId is required'),
-
-  body().custom((val: unknown) => {
-    if (bodyHasSeatIds(val) || bodyHasSeatsArray(val)) return true;
-    throw new Error('Provide seatIds: string[] or seats: { seatId: string }[]');
-  }),
-
-  handleValidationErrors,
-];
 
 const paymentMethodEnum = [
   'CARD',
@@ -439,107 +19,595 @@ const paymentStatusEnum = [
   'REFUNDED',
 ] as const;
 
-export const validatePaymentIntent = [
-  body('bookingId').isString().trim().isLength({ min: 1 }),
-  body('amount')
+export const handleValidationErrors = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty())
+    return res.fail('Validation failed', 400, errors.array());
+  next();
+};
+
+export const toUpper = (v?: unknown) =>
+  typeof v === 'string' ? v.toUpperCase() : v;
+
+const MOVIE_STATE_ENUM: readonly string[] = Object.values(
+  MOVIE_STATE,
+) as string[];
+
+const SEAT_TYPES = Object.values(SEAT_TYPE) as string[];
+
+const toStringArray = (v: unknown): string[] | undefined => {
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => String(x))
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+  if (typeof v === 'string') {
+    return v
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+  return undefined;
+};
+
+const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+const isoOrMysqlDatetime = (s: string) =>
+  /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z)?$/.test(s) ||
+  /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+export const validateAuthRegister = [
+  body('name').isString().trim().isLength({ min: 1, max: 100 }),
+  body('email').isEmail().isLength({ max: 255 }),
+  body('password').isString().isLength({ min: 6, max: 255 }),
+];
+
+export const validateAuthLogin = [
+  body('email').isEmail().isLength({ max: 255 }),
+  body('password').isString().isLength({ min: 6, max: 255 }),
+];
+
+export const validateMovieListQuery = [
+  query('q').optional().isString().trim().isLength({ min: 1, max: 200 }),
+  query('state')
+    .optional()
+    .isString()
+    .customSanitizer(toUpper)
+    .isIn(MOVIE_STATE_ENUM as string[]),
+  query('genre').optional().isString().trim().isLength({ min: 1, max: 60 }),
+  query('releasedFrom')
+    .optional()
+    .isString()
+    .custom((v) => isoOrMysqlDatetime(v))
+    .withMessage('releasedFrom must be ISO/MYSQL datetime'),
+  query('releasedTo')
+    .optional()
+    .isString()
+    .custom((v) => isoOrMysqlDatetime(v))
+    .withMessage('releasedTo must be ISO/MYSQL datetime'),
+  query('durationMin').optional().isInt({ min: 1, max: 1000 }).toInt(),
+  query('durationMax').optional().isInt({ min: 1, max: 1000 }).toInt(),
+];
+
+export const validateMovieCreate = [
+  body('slug')
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 220 })
+    .custom((v) => slugRegex.test(v))
+    .withMessage('slug must be lowercase, alphanumeric and hyphen-separated'),
+  body('title').isString().trim().isLength({ min: 1, max: 255 }),
+  body('description').optional().isString(),
+  body('runtimeMinutes').isInt({ min: 1, max: 1000 }).toInt(),
+  body('releaseDate')
+    .isString()
+    .custom((v) => isoOrMysqlDatetime(v))
+    .withMessage('releaseDate must be ISO/MYSQL datetime'),
+  body('state')
+    .isString()
+    .customSanitizer(toUpper)
+    .isIn(MOVIE_STATE_ENUM as string[])
+    .withMessage(`state must be one of: ${MOVIE_STATE_ENUM.join(', ')}`),
+
+  body('posterUrl').optional().isURL().isLength({ max: 500 }),
+  body('trailerUrl').optional().isURL().isLength({ max: 500 }),
+
+  body('genres').optional().customSanitizer(toStringArray).isArray(),
+  body('directors').optional().customSanitizer(toStringArray).isArray(),
+
+  body('cast')
+    .optional()
+    .isArray()
+    .custom((arr: unknown[]) => {
+      if (!Array.isArray(arr)) return false;
+      return arr.every((item) => {
+        if (!item || typeof item !== 'object') return false;
+        const castItem = item as Record<string, unknown>;
+        const hasValidName =
+          typeof castItem.name === 'string' && castItem.name.trim().length > 0;
+        const hasValidRole =
+          castItem.role === undefined ||
+          (typeof castItem.role === 'string' &&
+            castItem.role.trim().length > 0);
+        return hasValidName && hasValidRole;
+      });
+    })
+    .custom((arr: unknown[]) => {
+      if (!Array.isArray(arr)) return false;
+      return arr.every((item) => {
+        if (!item || typeof item !== 'object') return false;
+        const castItem = item as Record<string, unknown>;
+        return (
+          typeof castItem.name === 'string' &&
+          castItem.name.trim().length > 0 &&
+          (castItem.role === undefined || typeof castItem.role === 'string')
+        );
+      });
+    }),
+
+  body('ratingCode').optional().isString().trim().isLength({ min: 1, max: 10 }),
+  body('originalLanguage')
     .optional()
     .isString()
     .trim()
-    .matches(/^\d+(\.\d{1,2})?$/),
-  body('currency').optional().isString().trim().isLength({ min: 1, max: 5 }),
-  body('method').isIn(paymentMethodEnum),
-  body('transactionId').optional().isString().trim().isLength({ min: 1 }),
-  // metadata: tuỳ ý nên không ràng buộc
+    .isLength({ min: 1, max: 5 }),
+];
+
+export const validateMovieUpdate = [
+  body('slug')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 220 })
+    .custom((v) => slugRegex.test(v))
+    .withMessage('slug must be lowercase, alphanumeric and hyphen-separated'),
+  body('title').optional().isString().trim().isLength({ min: 1, max: 255 }),
+  body('description').optional().isString(),
+  body('runtimeMinutes').optional().isInt({ min: 1, max: 1000 }).toInt(),
+  body('releaseDate')
+    .optional()
+    .isString()
+    .custom((v) => isoOrMysqlDatetime(v))
+    .withMessage('releaseDate must be ISO/MYSQL datetime'),
+  body('state')
+    .optional()
+    .isString()
+    .customSanitizer(toUpper)
+    .isIn(MOVIE_STATE_ENUM as string[]),
+
+  body('posterUrl').optional().isURL().isLength({ max: 500 }),
+  body('trailerUrl').optional().isURL().isLength({ max: 500 }),
+
+  body('genres').optional().customSanitizer(toStringArray).isArray(),
+  body('directors').optional().customSanitizer(toStringArray).isArray(),
+  body('cast')
+    .optional()
+    .isArray()
+    .custom((arr: unknown[]) => {
+      if (!Array.isArray(arr)) return false;
+      return arr.every((item) => {
+        if (!item || typeof item !== 'object') return false;
+        const castItem = item as Record<string, unknown>;
+        return (
+          typeof castItem.name === 'string' &&
+          castItem.name.trim().length > 0 &&
+          (castItem.role === undefined || typeof castItem.role === 'string')
+        );
+      });
+    }),
+
+  body('ratingCode').optional().isString().trim().isLength({ min: 1, max: 10 }),
+  body('originalLanguage')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 5 }),
+];
+
+export const validateSlugParam = [
+  param('slug').isString().trim().isLength({ min: 1 }),
+];
+
+export const validateCinemaListQuery = [
+  query('city').optional().isString().trim().isLength({ min: 1, max: 100 }),
+  query('isActive').optional().isBoolean().toBoolean(),
+  query('q').optional().isString().trim().isLength({ min: 1, max: 100 }),
+];
+
+export const validateCinemaCreate = [
+  body('name').isString().trim().isLength({ min: 1, max: 255 }),
+  body('address').isString().trim().isLength({ min: 1 }),
+  body('city').isString().trim().isLength({ min: 1, max: 100 }),
+  body('phone').optional().isString().trim().isLength({ max: 20 }),
+  body('email').optional().isEmail().isLength({ max: 255 }),
+];
+
+export const validateCinemaUpdate = [
+  body('name').optional().isString().trim().isLength({ min: 1, max: 255 }),
+  body('address').optional().isString().trim().isLength({ min: 1 }),
+  body('city').optional().isString().trim().isLength({ min: 1, max: 100 }),
+  body('phone').optional().isString().trim().isLength({ max: 20 }),
+  body('email').optional().isEmail().isLength({ max: 255 }),
+];
+
+export const validateSeatListQuery = [
+  query('roomId').optional().isUUID().withMessage('roomId must be UUID'),
+  query('q').optional().isString().trim().isLength({ min: 1, max: 10 }),
+  query('type')
+    .optional()
+    .isString()
+    .customSanitizer(toUpper)
+    .isIn(SEAT_TYPES as string[]),
+  query('isActive').optional().isBoolean().toBoolean(),
+];
+
+export const validateSeatMapQuery = [
+  query('showtimeId').optional().isUUID(),
+  query('roomId').optional().isUUID(),
+  query().custom((value) => {
+    if (!value.showtimeId && !value.roomId) {
+      throw new Error('Either showtimeId or roomId is required');
+    }
+    return true;
+  }),
+];
+
+export const validateSeatIdParam = [
+  param('id').isUUID().withMessage('Invalid id'),
+];
+
+export const validateSeatCreate = [
+  body('roomId').isUUID().withMessage('roomId is required and must be UUID'),
+  body('seatNumber').isString().trim().isLength({ min: 1, max: 10 }),
+  body('row').isString().trim().isLength({ min: 1, max: 5 }),
+  body('column').isInt({ min: 1, max: 1000 }).toInt(),
+  body('type')
+    .optional()
+    .isString()
+    .customSanitizer(toUpper)
+    .isIn(SEAT_TYPES as string[]),
+  body('price')
+    .custom((v) => typeof v === 'string' || typeof v === 'number')
+    .withMessage('price must be string or number'),
+  body('isActive').optional().isBoolean().toBoolean(),
+];
+
+type OverrideItem = {
+  seatNumber: string;
+  type?: string;
+  price?: string | number;
+  isActive?: boolean;
+};
+const isOverrideItem = (x: unknown): x is OverrideItem => {
+  if (!x || typeof x !== 'object') return false;
+  const r = x as Record<string, unknown>;
+  if (typeof r.seatNumber !== 'string' || r.seatNumber.trim() === '')
+    return false;
+  if (r.type !== undefined && typeof r.type !== 'string') return false;
+  if (
+    r.price !== undefined &&
+    typeof r.price !== 'string' &&
+    typeof r.price !== 'number'
+  )
+    return false;
+  if (r.isActive !== undefined && typeof r.isActive !== 'boolean') return false;
+  return true;
+};
+
+export const validateSeatLayoutPreview = [
+  body('roomId').isUUID(),
+  body('startRow').isString().trim().isLength({ min: 1, max: 5 }),
+  body('rowCount').isInt({ min: 1, max: 200 }).toInt(),
+  body('startColumn').isInt({ min: 1, max: 1000 }).toInt(),
+  body('columnCount').isInt({ min: 1, max: 1000 }).toInt(),
+  body('defaultType')
+    .optional()
+    .isString()
+    .customSanitizer(toUpper)
+    .isIn(SEAT_TYPES as string[]),
+  body('defaultPrice')
+    .optional()
+    .custom((v) => typeof v === 'string' || typeof v === 'number'),
+  body('isActive').optional().isBoolean().toBoolean(),
+  body('skip').optional().customSanitizer(toStringArray).isArray(),
+  body('overrides')
+    .optional()
+    .isArray()
+    .custom((arr: unknown[]) => arr.every(isOverrideItem)),
+];
+
+export const validateSeatLayoutApply = [...validateSeatLayoutPreview];
+
+export const validateSeatUpdate = [
+  body('roomId').optional().isUUID(),
+  body('seatNumber').optional().isString().trim().isLength({ min: 1, max: 10 }),
+  body('row').optional().isString().trim().isLength({ min: 1, max: 5 }),
+  body('column').optional().isInt({ min: 1, max: 1000 }).toInt(),
+  body('type')
+    .optional()
+    .isString()
+    .customSanitizer(toUpper)
+    .isIn(SEAT_TYPES as string[]),
+  body('price')
+    .optional()
+    .custom((v) => typeof v === 'string' || typeof v === 'number')
+    .withMessage('price must be string or number'),
+  body('isActive').optional().isBoolean().toBoolean(),
+];
+
+export const validateIdParam = [param('id').isUUID().withMessage('Invalid id')];
+
+const isDateLike = (s: unknown) =>
+  typeof s === 'string' &&
+  (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?(?:Z)?$/.test(s) ||
+    !Number.isNaN(Date.parse(s)));
+
+export const validateShowtimeListQuery = [
+  query('movieId').optional().isUUID(),
+  query('cinemaId').optional().isUUID(),
+  query('roomId').optional().isUUID(),
+  query('from')
+    .optional()
+    .custom(isDateLike)
+    .withMessage('from must be ISO/MySQL datetime'),
+  query('to')
+    .optional()
+    .custom(isDateLike)
+    .withMessage('to must be ISO/MySQL datetime'),
+  query('priceMin').optional().isFloat({ min: 0 }).toFloat(),
+  query('priceMax').optional().isFloat({ min: 0 }).toFloat(),
+  query('isActive').optional().isBoolean().toBoolean(),
+];
+
+export const validateShowtimeCreate = [
+  body('movieId').isUUID(),
+  body('cinemaId').isUUID(),
+  body('roomId').isUUID(),
+  body('startsAt')
+    .custom(isDateLike)
+    .withMessage('startsAt must be ISO/MySQL datetime'),
+  body('price')
+    .custom((v) => typeof v === 'string' || typeof v === 'number')
+    .withMessage('price must be string/number'),
+  body('isActive').optional().isBoolean().toBoolean(),
+];
+
+export const validateShowtimeUpdate = [
+  body('movieId').optional().isUUID(),
+  body('cinemaId').optional().isUUID(),
+  body('roomId').optional().isUUID(),
+  body('startsAt').optional().custom(isDateLike),
+  body('price')
+    .optional()
+    .custom((v) => typeof v === 'string' || typeof v === 'number'),
+  body('isActive').optional().isBoolean().toBoolean(),
+];
+
+export const validateUserListQuery = [
+  query('q').optional().isString().trim().isLength({ min: 1, max: 100 }),
+  query('role').optional().isString().trim().customSanitizer(toUpper),
+  query('isActive').optional().isBoolean().toBoolean(),
+];
+
+export const validateUserCreate = [
+  body('name').isString().trim().isLength({ min: 1, max: 100 }),
+  body('email').isEmail().isLength({ max: 255 }),
+  body('password').isString().isLength({ min: 6, max: 255 }),
+  body('role')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 20 })
+    .customSanitizer(toUpper),
+  body('isActive').optional().isBoolean().toBoolean(),
+  body('phone').optional().isString().trim().isLength({ min: 3, max: 30 }),
+  body('avatarUrl').optional().isURL(),
+];
+
+export const validateUserUpdate = [
+  body('name').optional().isString().trim().isLength({ min: 1, max: 100 }),
+  body('email').optional().isEmail().isLength({ max: 255 }),
+  body('password').optional().isString().isLength({ min: 6, max: 255 }),
+  body('role')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 20 })
+    .customSanitizer(toUpper),
+  body('isActive').optional().isBoolean().toBoolean(),
+  body('phone').optional().isString().trim().isLength({ min: 3, max: 30 }),
+  body('avatarUrl').optional().isURL(),
+];
+
+export const validatePagination = [
+  query('page').optional().isInt({ min: 1 }).toInt(),
+  query('pageSize').optional().isInt({ min: 1, max: 200 }).toInt(),
+];
+
+export const validateRoomListQuery = [
+  query('cinemaId').optional().isUUID(),
+  query('isActive').optional().isBoolean().toBoolean(),
+  query('q').optional().isString().trim().isLength({ min: 1, max: 100 }),
+];
+
+export const validateRoomCreate = [
+  body('cinemaId').isUUID().withMessage('cinemaId must be UUID'),
+  body('name').isString().trim().isLength({ min: 1, max: 100 }),
+  body('capacity').optional().isInt({ min: 0 }).toInt(),
+  body('isActive').optional().isBoolean().toBoolean(),
+  body('seatingMap')
+    .optional()
+    .custom((v) => typeof v === 'object' && v !== null),
+];
+
+export const validateRoomUpdate = [
+  body('cinemaId').optional().isUUID(),
+  body('name').optional().isString().trim().isLength({ min: 1, max: 100 }),
+  body('capacity').optional().isInt({ min: 0 }).toInt(),
+  body('isActive').optional().isBoolean().toBoolean(),
+  body('seatingMap')
+    .optional()
+    .custom((v) => typeof v === 'object' || v === null),
+];
+
+export const validateBookingListQuery = [
+  query('showtimeId').optional().isUUID(),
+  query('userId').optional().isUUID(),
+  query('status')
+    .optional()
+    .isString()
+    .isIn([
+      'PENDING',
+      'AWAITING_PAYMENT',
+      'PAID',
+      'CONFIRMED',
+      'CANCELLED',
+      'EXPIRED',
+      'REFUNDED',
+    ]),
+  query('paymentStatus')
+    .optional()
+    .isString()
+    .isIn(['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'REFUNDED']),
+];
+
+export const validateBookingHold = [
+  body('showtimeId').isUUID().withMessage('showtimeId must be UUID'),
+  body('sessionId')
+    .isString()
+    .trim()
+    .isLength({ min: 8, max: 64 })
+    .withMessage('sessionId 8..64 chars'),
+  body('userId').optional().isUUID(),
+  body('bookingId').optional().isUUID(),
+  body('seatIds')
+    .isArray({ min: 1 })
+    .withMessage('seatIds must be a non-empty array')
+    .bail()
+    .custom((arr: unknown) => {
+      if (!Array.isArray(arr)) return false;
+      return arr.every((x): x is string => typeof x === 'string');
+    })
+    .withMessage('seatIds must be array of strings')
+    .bail()
+    .custom((arr: unknown) => {
+      if (!Array.isArray(arr)) return false;
+      return arr.every(
+        (x): x is string =>
+          typeof x === 'string' && /^[0-9a-fA-F-]{36}$/.test(x),
+      );
+    })
+    .withMessage('each seatId must be a UUID'),
+];
+
+export const validateBookingCancel = [
+  body('reason').optional().isString().trim().isLength({ max: 500 }),
+];
+
+export const validateBookingPaymentWebhook = [
+  body('transactionId').isString().trim().isLength({ min: 3, max: 100 }),
+  body('bookingId').isUUID(),
+  body('status').isString().isIn(['PROCESSING', 'PAID', 'FAILED', 'REFUNDED']),
+  body('amount')
+    .optional()
+    .custom((v) => typeof v === 'string' || typeof v === 'number'),
+  body('currency').optional().isString().isLength({ min: 3, max: 3 }),
+  body('method')
+    .optional()
+    .isString()
+    .isIn([...paymentMethodEnum] as string[]),
+  body('gatewayResponse').optional().isString(),
+  body('processedAt').optional().isISO8601().toDate(),
+];
+
+export const validatePaymentListQuery = [
+  query('bookingId').optional().isUUID(),
+  query('status')
+    .optional()
+    .isString()
+    .isIn(['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'REFUNDED']),
+  query('method')
+    .optional()
+    .isString()
+    .isIn([...paymentMethodEnum] as string[]),
+  query('currency').optional().isString().isLength({ min: 3, max: 3 }),
+];
+
+export const validatePaymentCreate = [
+  body('bookingId').isUUID(),
+  body('amount').custom((v) => typeof v === 'string' || typeof v === 'number'),
+  body('currency').optional().isString().isLength({ min: 3, max: 3 }),
+  body('method')
+    .optional()
+    .isString()
+    .isIn([...paymentMethodEnum] as string[]),
+  body('transactionId').optional().isString().isLength({ min: 3, max: 100 }),
+  body('status')
+    .optional()
+    .isString()
+    .isIn([...paymentStatusEnum] as string[]),
+  body('gatewayResponse').optional().isString(),
 ];
 
 export const validatePaymentWebhook = [
-  body('transactionId').optional().isString().trim().isLength({ min: 1 }),
-  body('bookingId').optional().isString().trim().isLength({ min: 1 }),
-  body('status').isIn(paymentStatusEnum),
-  body('failedReason')
+  body('transactionId').isString().isLength({ min: 3, max: 100 }),
+  body('bookingId').isUUID(),
+  body('status').isString().isIn(['PROCESSING', 'PAID', 'FAILED', 'REFUNDED']),
+  body('amount')
+    .optional()
+    .custom((v) => typeof v === 'string' || typeof v === 'number'),
+  body('currency').optional().isString().isLength({ min: 3, max: 3 }),
+  body('method')
     .optional()
     .isString()
-    .trim()
-    .isLength({ min: 1, max: 500 }),
-  body('processedAt').optional().isISO8601(),
-  // gatewayResponse: cho phép bất kỳ
+    .isIn([...paymentMethodEnum] as string[]),
+  body('gatewayResponse').optional().isString(),
+  body('processedAt').optional().isISO8601().toDate(),
+];
+export const validateTicketListQuery = [
+  query('bookingId').optional().isUUID(),
+  query('showtimeId').optional().isUUID(),
+  query('seatId').optional().isUUID(),
+  query('status')
+    .optional()
+    .isIn(['ISSUED', 'CHECKED_IN', 'VOIDED', 'REFUNDED']),
 ];
 
-export const validateTicketScan = [
-  body('qrToken').isString().trim().isLength({ min: 1 }),
+export const validateTicketIssueForBooking = [
+  body('bookingId').isUUID(),
+  body('regenerateIfExists').optional().isBoolean().toBoolean(),
+];
+
+export const validateTicketReissue = [
+  body('reason').optional().isString().trim().isLength({ max: 500 }),
+];
+
+export const validateTicketCheckIn = [
   body('gate').optional().isString().trim().isLength({ min: 1, max: 50 }),
 ];
 
+export const validateTicketVoid = [
+  body('reason').optional().isString().trim().isLength({ max: 500 }),
+];
+
+export const validateTicketRefund = [
+  body('reason').optional().isString().trim().isLength({ max: 500 }),
+];
+
+export const validateTicketVerifyQr = [
+  body('qrToken').isString().trim().isLength({ min: 10, max: 64 }),
+];
+
 export const validateBookingIdParam = [
-  param('bookingId').isString().trim().isLength({ min: 1 }),
+  param('bookingId').isUUID().withMessage('Invalid bookingId'),
 ];
 
-export const validatePaymentUpdate = [
-  body('paymentStatus')
-    .isIn(['pending', 'paid', 'failed', 'refunded'])
-    .withMessage('Invalid payment status'),
-  body('transactionId')
-    .optional()
-    .isLength({ min: 1, max: 100 })
-    .withMessage('Transaction ID must be 1-100 characters'),
-  handleValidationErrors,
-];
-
-export const validateBookingQuery = [
-  query('status')
-    .optional()
-    .isIn(['pending', 'confirmed', 'cancelled', 'expired'])
-    .withMessage('Invalid booking status'),
-  query('paymentStatus')
-    .optional()
-    .isIn(['pending', 'paid', 'failed', 'refunded'])
-    .withMessage('Invalid payment status'),
-  query('userId').optional().isUUID().withMessage('Invalid user ID format'),
-  query('showtimeId')
-    .optional()
-    .isUUID()
-    .withMessage('Invalid showtime ID format'),
-  query('movieId').optional().isUUID().withMessage('Invalid movie ID format'),
-  query('cinemaId').optional().isUUID().withMessage('Invalid cinema ID format'),
-  query('fromDate')
-    .optional()
-    .isISO8601()
-    .withMessage('Invalid fromDate format (use YYYY-MM-DD)'),
-  query('toDate')
-    .optional()
-    .isISO8601()
-    .withMessage('Invalid toDate format (use YYYY-MM-DD)'),
-  query('bookingNumber')
-    .optional()
-    .matches(/^BK\d{8}\d{6}[A-Z0-9]{4}$/)
-    .withMessage('Invalid booking number format'),
-  handleValidationErrors,
-];
-
-export const validateConfirmBooking = [
-  body('paymentMethod')
-    .optional()
-    .isIn(['cash', 'card', 'online', 'bank_transfer', 'wallet'])
-    .withMessage('Invalid payment method'),
-  handleValidationErrors,
-];
-
-export const validateCancelBooking = [
-  body('reason')
-    .optional()
-    .isLength({ max: 200 })
-    .withMessage('Cancellation reason must not exceed 200 characters'),
-  handleValidationErrors,
-];
-
-export const validateStatsQuery = [
-  query('fromDate')
-    .optional()
-    .isISO8601()
-    .withMessage('Invalid fromDate format (use YYYY-MM-DD)'),
-  query('toDate')
-    .optional()
-    .isISO8601()
-    .withMessage('Invalid toDate format (use YYYY-MM-DD)'),
-  handleValidationErrors,
+export const validateTicketScan = [
+  body('qrToken').isString().notEmpty().withMessage('qrToken is required'),
+  body('gate').optional().isString().withMessage('gate must be a string'),
 ];

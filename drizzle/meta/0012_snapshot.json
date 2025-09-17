@@ -74,10 +74,10 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "booking_seats_showtime_id_showtimes_id_fk": {
-          "name": "booking_seats_showtime_id_showtimes_id_fk",
+        "booking_seats_showtime_id_show_times_id_fk": {
+          "name": "booking_seats_showtime_id_show_times_id_fk",
           "tableFrom": "booking_seats",
-          "tableTo": "showtimes",
+          "tableTo": "show_times",
           "columnsFrom": [
             "showtime_id"
           ],
@@ -292,10 +292,10 @@
         }
       },
       "foreignKeys": {
-        "bookings_showtime_id_showtimes_id_fk": {
-          "name": "bookings_showtime_id_showtimes_id_fk",
+        "bookings_showtime_id_show_times_id_fk": {
+          "name": "bookings_showtime_id_show_times_id_fk",
           "tableFrom": "bookings",
-          "tableTo": "showtimes",
+          "tableTo": "show_times",
           "columnsFrom": [
             "showtime_id"
           ],
@@ -928,8 +928,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "showtimes": {
-      "name": "showtimes",
+    "show_times": {
+      "name": "show_times",
       "columns": {
         "id": {
           "name": "id",
@@ -1042,9 +1042,9 @@
         }
       },
       "foreignKeys": {
-        "showtimes_movie_id_movies_id_fk": {
-          "name": "showtimes_movie_id_movies_id_fk",
-          "tableFrom": "showtimes",
+        "show_times_movie_id_movies_id_fk": {
+          "name": "show_times_movie_id_movies_id_fk",
+          "tableFrom": "show_times",
           "tableTo": "movies",
           "columnsFrom": [
             "movie_id"
@@ -1055,9 +1055,9 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "showtimes_cinema_id_cinemas_id_fk": {
-          "name": "showtimes_cinema_id_cinemas_id_fk",
-          "tableFrom": "showtimes",
+        "show_times_cinema_id_cinemas_id_fk": {
+          "name": "show_times_cinema_id_cinemas_id_fk",
+          "tableFrom": "show_times",
           "tableTo": "cinemas",
           "columnsFrom": [
             "cinema_id"
@@ -1068,9 +1068,9 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "showtimes_room_id_rooms_id_fk": {
-          "name": "showtimes_room_id_rooms_id_fk",
-          "tableFrom": "showtimes",
+        "show_times_room_id_rooms_id_fk": {
+          "name": "show_times_room_id_rooms_id_fk",
+          "tableFrom": "show_times",
           "tableTo": "rooms",
           "columnsFrom": [
             "room_id"
@@ -1083,8 +1083,8 @@
         }
       },
       "compositePrimaryKeys": {
-        "showtimes_id": {
-          "name": "showtimes_id",
+        "show_times_id": {
+          "name": "show_times_id",
           "columns": [
             "id"
           ]
@@ -1241,10 +1241,10 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "tickets_showtime_id_showtimes_id_fk": {
-          "name": "tickets_showtime_id_showtimes_id_fk",
+        "tickets_showtime_id_show_times_id_fk": {
+          "name": "tickets_showtime_id_show_times_id_fk",
           "tableFrom": "tickets",
-          "tableTo": "showtimes",
+          "tableTo": "show_times",
           "columnsFrom": [
             "showtime_id"
           ],

@@ -6,7 +6,6 @@ import { Permission } from '../utils/auth/roles';
 import {
   validatePagination,
   validateShowtimeListQuery,
-  validateShowtimeCreation,
   validateShowtimeUpdate,
   validateIdParam,
   handleValidationErrors,
@@ -35,7 +34,7 @@ r.post(
   '/',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
-  validateShowtimeCreation,
+
   handleValidationErrors,
   c.createShowtime,
 );

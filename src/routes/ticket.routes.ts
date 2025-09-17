@@ -16,8 +16,8 @@ const r = Router();
 r.post(
   '/scan',
   requireAuth,
-  authorize(Permission.MANAGE_BOOKINGS), // hoặc Permission.MANAGE_TICKETS nếu bạn có
-  validateTicketScan,
+  authorize(Permission.MANAGE_BOOKINGS),
+  validateTicketScan, // ✅ validate qrToken, gate
   handleValidationErrors,
   c.scan,
 );
@@ -27,18 +27,20 @@ r.get(
   '/:id',
   requireAuth,
   authorize(Permission.MANAGE_BOOKINGS),
-  validateIdParam,
+  validateIdParam, // ✅ validate param id
   handleValidationErrors,
   c.getTicket,
 );
+
 r.get(
   '/by-booking/:bookingId',
   requireAuth,
   authorize(Permission.MANAGE_BOOKINGS),
-  validateBookingIdParam,
+  validateBookingIdParam, // ✅ validate bookingId
   handleValidationErrors,
   c.listByBooking,
 );
+
 r.post(
   '/:id/reissue',
   requireAuth,
@@ -47,6 +49,7 @@ r.post(
   handleValidationErrors,
   c.reissue,
 );
+
 r.post(
   '/:id/void',
   requireAuth,

@@ -225,8 +225,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "showtimes": {
-      "name": "showtimes",
+    "show_times": {
+      "name": "show_times",
       "columns": {
         "id": {
           "name": "id",
@@ -307,8 +307,8 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "showtimes_id": {
-          "name": "showtimes_id",
+        "show_times_id": {
+          "name": "show_times_id",
           "columns": [
             "id"
           ]

@@ -15,9 +15,9 @@ export type RoomListItem = {
 };
 
 export type RoomFilters = {
-  cinemaId?: string;
-  isActive?: boolean;
-  q?: string;
+  cinemaId?: string | undefined;
+  isActive?: boolean | undefined;
+  q?: string | undefined;
 };
 
 export type NewRoom = {
@@ -44,13 +44,17 @@ async function assertUniqueNameInCinema(
 }
 
 export async function list(
-  page = 1,
-  pageSize = 20,
-  filters?: { cinemaId?: string; isActive?: boolean; q?: string },
+  page: number,
+  pageSize: number,
+  filters?: RoomFilters,
 ): Promise<{ items: RoomListItem[]; total: number }> {
-  const where = filters?.cinemaId
-    ? eq(rooms.cinemaId, filters.cinemaId)
-    : undefined;
+  const where = and(
+    filters?.cinemaId ? eq(rooms.cinemaId, filters.cinemaId) : undefined,
+    typeof filters?.isActive === 'boolean'
+      ? eq(rooms.isActive, filters.isActive)
+      : undefined,
+    filters?.q ? sql`${rooms.name} LIKE ${'%' + filters.q + '%'}` : undefined,
+  );
 
   const rows = await db
     .select({
@@ -75,12 +79,14 @@ export async function list(
     .select({ total: count() })
     .from(rooms)
     .where(where);
+
   const items: RoomListItem[] = rows.map((r) => ({
     ...r,
     capacity: Number(r.capacity ?? 0),
     seatsCount: Number(r.seatsCount ?? 0),
     activeSeats: Number(r.activeSeats ?? 0),
   }));
+
   return { items, total: Number(total) };
 }
 
@@ -119,10 +125,9 @@ export async function create(input: NewRoom): Promise<RoomListItem> {
     id,
     cinemaId: input.cinemaId,
     name: input.name,
-    capacity: typeof input.capacity === 'number' ? input.capacity : 0,
+    capacity: input.capacity ?? 0,
     isActive: typeof input.isActive === 'boolean' ? input.isActive : true,
-    seatingMap:
-      typeof input.seatingMap !== 'undefined' ? input.seatingMap : null,
+    seatingMap: input.seatingMap ?? null,
   });
 
   return getById(id);
@@ -146,8 +151,8 @@ export async function update(
   }
 
   const data: Partial<typeof rooms.$inferInsert> = {};
-  if (typeof patch.cinemaId === 'string') data.cinemaId = patch.cinemaId;
-  if (typeof patch.name === 'string') data.name = patch.name;
+  if (patch.cinemaId) data.cinemaId = patch.cinemaId;
+  if (patch.name) data.name = patch.name;
   if (typeof patch.capacity === 'number') data.capacity = patch.capacity;
   if (typeof patch.isActive === 'boolean') data.isActive = patch.isActive;
   if (typeof patch.seatingMap !== 'undefined')

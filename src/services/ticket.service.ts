@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../db';
-import { seats, showtimes, tickets } from '../db/schema';
+import { seats, show_times, tickets } from '../db/schema';
 import { ConflictError, NotFoundError } from '../utils/errors/base';
 
 export type TicketStatus = 'ISSUED' | 'CHECKED_IN' | 'VOIDED' | 'REFUNDED';
@@ -114,11 +114,6 @@ export async function listByBooking(
   }));
 }
 
-/** Idempotent scan theo qrToken:
- *  - Nếu ISSUED  → chuyển CHECKED_IN và set thời gian/gate.
- *  - Nếu CHECKED_IN → trả về firstScan=false.
- *  - Nếu VOIDED/REFUNDED → báo lỗi.
- */
 export async function scanByQrToken(
   qrToken: string,
   gate?: string,
@@ -151,14 +146,13 @@ export async function scanByQrToken(
       ticketId: t.id,
       status: 'CHECKED_IN',
       firstScan: false,
-      checkedInAt: t.checkedInAt ?? new Date(), // fallback
+      checkedInAt: t.checkedInAt ?? new Date(),
       seatNumber: t.seatNumber,
       row: t.row,
       column: t.column,
     };
   }
 
-  // t.status === 'ISSUED' → cập nhật
   const now = new Date();
   await db
     .update(tickets)
@@ -180,7 +174,6 @@ export async function scanByQrToken(
   };
 }
 
-/** Reissue: vô hiệu hoá vé cũ (VOIDED) và phát vé mới với version+1 */
 export async function reissue(
   ticketId: string,
 ): Promise<{ newTicketId: string; qrToken: string }> {
@@ -210,7 +203,6 @@ export async function reissue(
       status: 'ISSUED',
       qrToken: newQr,
       issuedAt: new Date(),
-      // nếu bạn có cột reissued_from_id trong schema:
       version: (t.version ?? 1) + 1,
     } as typeof tickets.$inferInsert);
   });
@@ -218,7 +210,6 @@ export async function reissue(
   return { newTicketId: newId, qrToken: newQr };
 }
 
-/** Void 1 vé (khi cần huỷ trước suất chiếu) */
 export async function voidTicket(ticketId: string): Promise<void> {
   const [t] = await db
     .select()
@@ -234,16 +225,15 @@ export async function voidTicket(ticketId: string): Promise<void> {
     .where(eq(tickets.id, ticketId));
 }
 
-/** (tuỳ) Validate vé thuộc đúng showtime trước giờ chiếu */
 export async function assertUsableForShowtime(ticketId: string): Promise<void> {
   const [row] = await db
     .select({
       id: tickets.id,
       status: tickets.status,
-      startsAt: showtimes.startsAt,
+      startsAt: show_times.startsAt,
     })
     .from(tickets)
-    .innerJoin(showtimes, eq(showtimes.id, tickets.showtimeId))
+    .innerJoin(show_times, eq(show_times.id, tickets.showtimeId))
     .where(eq(tickets.id, ticketId))
     .limit(1);
 
@@ -252,6 +242,5 @@ export async function assertUsableForShowtime(ticketId: string): Promise<void> {
     throw new ConflictError('Ticket not valid');
   }
   if (row.startsAt && row.startsAt < new Date()) {
-    // Tuỳ chính sách: có cho vào trễ không
   }
 }
