@@ -16,7 +16,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     const token = auth.slice(7);
     const payload = jwt.verify(token, JWT_SECRET) as JwtUser;
 
-    // Ensure user has permissions based on their role
     payload.permissions =
       payload.permissions ?? RolePermissions[payload.role as Role] ?? [];
 
@@ -33,12 +32,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// Optional auth - doesn't fail if no token provided
 export function optionalAuth(req: Request, res: Response, next: NextFunction) {
   const auth = req.headers.authorization;
 
   if (!auth?.startsWith('Bearer ')) {
-    return next(); // No token provided, continue without user
+    return next();
   }
 
   try {
@@ -48,7 +46,6 @@ export function optionalAuth(req: Request, res: Response, next: NextFunction) {
       payload.permissions ?? RolePermissions[payload.role as Role] ?? [];
     req.user = payload;
   } catch {
-    // Invalid token, but we don't fail - just continue without user
     req.user = undefined;
   }
 

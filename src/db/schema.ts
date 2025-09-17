@@ -14,10 +14,6 @@ import {
   primaryKey,
 } from 'drizzle-orm/mysql-core';
 
-/* =========================
-   ENUM CONSTANTS (UPPERCASE)
-   ========================= */
-
 export const MOVIE_STATE = {
   COMING_SOON: 'COMING_SOON',
   NOW_SHOWING: 'NOW_SHOWING',
@@ -66,10 +62,6 @@ export const SEAT_TYPE = {
   DISABLED: 'DISABLED',
 } as const;
 
-/* =============
-   CORE TABLES
-   ============= */
-
 export const users = mysqlTable('users', {
   id: varchar('id', { length: 36 })
     .primaryKey()
@@ -86,7 +78,6 @@ export const users = mysqlTable('users', {
     .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
 });
 
-/** MOVIES — lean + JSON, giống CGV nhưng gọn, dễ mở rộng */
 export const movies = mysqlTable(
   'movies',
   {
@@ -98,8 +89,8 @@ export const movies = mysqlTable(
     title: varchar('title', { length: 255 }).notNull(),
     description: text('description'),
 
-    runtimeMinutes: int('runtime_minutes').notNull(), // vd 124
-    releaseDate: datetime('release_date').notNull(), // có thể dùng DATE nếu bạn muốn
+    runtimeMinutes: int('runtime_minutes').notNull(),
+    releaseDate: datetime('release_date').notNull(),
 
     state: mysqlEnum(
       'state',
@@ -111,13 +102,12 @@ export const movies = mysqlTable(
     posterUrl: varchar('poster_url', { length: 500 }),
     trailerUrl: varchar('trailer_url', { length: 500 }),
 
-    /** danh sách dạng JSON để v1 triển khai nhanh */
-    genres: json('genres'), // string[]
-    directors: json('directors'), // string[]
-    cast: json('cast'), // { name, role? }[]
+    genres: json('genres'),
+    directors: json('directors'),
+    cast: json('cast'),
 
-    ratingCode: varchar('rating_code', { length: 10 }), // vd "T13"
-    originalLanguage: varchar('original_language', { length: 5 }), // vi, en, …
+    ratingCode: varchar('rating_code', { length: 10 }),
+    originalLanguage: varchar('original_language', { length: 5 }),
 
     createdAt: datetime('created_at')
       .notNull()
@@ -150,7 +140,6 @@ export const cinemas = mysqlTable('cinemas', {
     .default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
 });
 
-/** ROOMS — phòng chiếu, kèm seating_map JSON để generate seats */
 export const rooms = mysqlTable(
   'rooms',
   {
@@ -163,7 +152,7 @@ export const rooms = mysqlTable(
     name: varchar('name', { length: 100 }).notNull(),
     capacity: int('capacity').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
-    seatingMap: json('seating_map'), // blueprint JSON (tuỳ chọn)
+    seatingMap: json('seating_map'),
     createdAt: datetime('created_at')
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -180,7 +169,6 @@ export const rooms = mysqlTable(
   }),
 );
 
-/** SEATS — gắn với room (không phải cinema) */
 export const seats = mysqlTable(
   'seats',
   {
@@ -190,7 +178,7 @@ export const seats = mysqlTable(
     roomId: varchar('room_id', { length: 36 })
       .notNull()
       .references(() => rooms.id, { onDelete: 'cascade' }),
-    seatNumber: varchar('seat_number', { length: 10 }).notNull(), // A1, B5, …
+    seatNumber: varchar('seat_number', { length: 10 }).notNull(),
     row: varchar('row', { length: 5 }).notNull(),
     column: int('column').notNull(),
     type: mysqlEnum('type', Object.values(SEAT_TYPE) as [string, ...string[]])
@@ -214,7 +202,6 @@ export const seats = mysqlTable(
   }),
 );
 
-/** show_times — gộp thời gian: starts_at, có room_id */
 export const show_times = mysqlTable(
   'show_times',
   {
@@ -231,7 +218,7 @@ export const show_times = mysqlTable(
       .notNull()
       .references(() => rooms.id, { onDelete: 'restrict' }),
 
-    startsAt: datetime('starts_at').notNull(), // UTC
+    startsAt: datetime('starts_at').notNull(),
     price: decimal('price', { precision: 10, scale: 2 }).notNull(),
     totalSeats: int('total_seats').notNull().default(0),
     bookedSeats: int('booked_seats').notNull().default(0),
@@ -260,7 +247,6 @@ export const show_times = mysqlTable(
   }),
 );
 
-/** BOOKINGS — tinh gọn, không chứa PII payment/customer */
 export const bookings = mysqlTable(
   'bookings',
   {
@@ -326,7 +312,6 @@ export const bookings = mysqlTable(
   }),
 );
 
-/** BOOKING_SEATS — composite PK (showtime_id, seat_id) + booking_id */
 export const bookingSeats = mysqlTable(
   'booking_seats',
   {
@@ -354,16 +339,13 @@ export const bookingSeats = mysqlTable(
   }),
 );
 
-/** BOOKING_SEAT_HOLDS — tạm giữ ghế trong thời gian ngắn */
 export const bookingSeatHolds = mysqlTable(
   'booking_seat_holds',
   {
     id: varchar('id', { length: 36 }).primaryKey(),
 
-    // HƯỚNG B: không bắt buộc gắn với booking ngay từ đầu
-    bookingId: varchar('booking_id', { length: 36 }), // <- BỎ .notNull()
+    bookingId: varchar('booking_id', { length: 36 }),
 
-    // Định danh phiên/thiết bị để anti-double click & resume
     sessionId: varchar('session_id', { length: 64 }).notNull(),
 
     showtimeId: varchar('showtime_id', { length: 36 }).notNull(),
@@ -387,7 +369,6 @@ export const bookingSeatHolds = mysqlTable(
   }),
 );
 
-/** PAYMENTS — chi tiết thanh toán 1:n với bookings */
 export const payments = mysqlTable(
   'payments',
   {
@@ -426,7 +407,6 @@ export const payments = mysqlTable(
   }),
 );
 
-/** TICKETS — 1 vé / 1 ghế */
 export const tickets = mysqlTable(
   'tickets',
   {
@@ -451,7 +431,7 @@ export const tickets = mysqlTable(
       .notNull()
       .default(TICKET_STATUS.ISSUED),
 
-    qrToken: varchar('qr_token', { length: 64 }).notNull(), // UNIQUE token
+    qrToken: varchar('qr_token', { length: 64 }).notNull(),
     issuedAt: datetime('issued_at')
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -481,10 +461,6 @@ export const tickets = mysqlTable(
     idxBooking: index('idx_ticket_booking').on(t.bookingId),
   }),
 );
-
-/* =============
-   RELATIONS
-   ============= */
 
 export const cinemasRelations = relations(cinemas, ({ many }) => ({
   rooms: many(rooms),
@@ -560,9 +536,6 @@ export const ticketsRelations = relations(tickets, ({ one }) => ({
   seat: one(seats, { fields: [tickets.seatId], references: [seats.id] }),
 }));
 
-/* =============
-   TYPES
-   ============= */
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 

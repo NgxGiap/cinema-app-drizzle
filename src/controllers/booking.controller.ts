@@ -1,7 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import * as svc from '../services/booking.service';
 
-// POST /bookings/hold
 export async function holdSeats(
   req: Request,
   res: Response,
@@ -22,7 +21,6 @@ export async function holdSeats(
   }
 }
 
-// GET /bookings/:id
 export async function getBooking(
   req: Request,
   res: Response,
@@ -36,7 +34,6 @@ export async function getBooking(
   }
 }
 
-// POST /bookings/:id/cancel
 export async function cancelBooking(
   req: Request,
   res: Response,
@@ -50,7 +47,6 @@ export async function cancelBooking(
   }
 }
 
-// POST /bookings/:id/mark-paid
 export async function markPaid(
   req: Request,
   res: Response,

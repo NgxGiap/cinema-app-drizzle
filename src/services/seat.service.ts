@@ -61,7 +61,6 @@ export type SeatMapItem = {
 
 export type LayoutApplyMode = 'replace' | 'merge';
 
-/* helpers */
 function normalizeType(t?: string | null): SeatType | undefined {
   if (!t) return undefined;
   const up = t.toUpperCase();
@@ -70,7 +69,6 @@ function normalizeType(t?: string | null): SeatType | undefined {
     : undefined;
 }
 
-/* queries */
 export async function list(
   page = 1,
   pageSize = 50,
@@ -367,7 +365,6 @@ export async function getSeatMapWithStatus(
   });
 }
 
-/* Layout */
 export function buildSeatsFromLayout(
   roomId: string,
   layout: SeatLayout,

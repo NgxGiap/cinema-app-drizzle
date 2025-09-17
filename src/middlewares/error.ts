@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../utils/errors/base';
+import logger from '../utils/logger/logger';
 
 export function errorHandler(
   err: unknown,
@@ -8,10 +9,13 @@ export function errorHandler(
   _next: NextFunction,
 ) {
   if (err instanceof AppError) {
+    logger.warn({ err, path: req.originalUrl }, 'AppError');
     return res.fail(err.message, err.statusCode);
   }
 
   if (err instanceof Error) {
+    logger.error({ err, path: req.originalUrl }, 'Unhandled error');
+
     if (
       err.message.includes('duplicate key') ||
       err.message.includes('unique constraint')
@@ -31,5 +35,6 @@ export function errorHandler(
     );
   }
 
+  logger.error({ err, path: req.originalUrl }, 'Unknown error type');
   return res.fail('Something went wrong', 500);
 }

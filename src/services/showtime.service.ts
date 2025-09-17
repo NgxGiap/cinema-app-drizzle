@@ -39,7 +39,7 @@ export type ShowtimeFilters = {
 export type ShowtimeListItem = {
   id: string;
   startsAt: Date;
-  price: string; // luôn string (decimal)
+  price: string;
   totalSeats: number;
   bookedSeats: number;
   availableSeats: number;
@@ -124,12 +124,6 @@ function mapRow(r: {
   };
 }
 
-/* ---------------- helpers ---------------- */
-
-// async function assertExists() {
-//   // no-op; chỉ để bạn tiện đặt breakpoint nếu cần
-// }
-
 async function ensureMovie(movieId: string): Promise<void> {
   const [m] = await db
     .select({ id: movies.id })
@@ -148,7 +142,6 @@ async function ensureCinema(cinemaId: string): Promise<void> {
   if (!c) throw new NotFoundError('Cinema not found');
 }
 
-/** Lấy hoặc tạo Room 1 cho một rạp (compat khi bạn chưa có Rooms module) */
 export async function ensureDefaultRoom(cinemaId: string): Promise<string> {
   const [r] = await db
     .select({ id: rooms.id })
@@ -181,12 +174,9 @@ function toWhere(filters?: ShowtimeFilters): SQL<unknown> | undefined {
   return clauses.length ? and(...clauses) : undefined;
 }
 
-/* ---------------- services ---------------- */
-
 export async function create(
   input: CreateShowtimeInput,
 ): Promise<ShowtimeListItem> {
-  // Chuẩn hoá & validate startsAt
   const startsAt =
     input.startsAt instanceof Date ? input.startsAt : new Date(input.startsAt);
   if (Number.isNaN(+startsAt)) {
@@ -198,9 +188,7 @@ export async function create(
 
   const roomId = input.roomId || (await ensureDefaultRoom(input.cinemaId));
 
-  // TRẢ VỀ id từ transaction, để đảm bảo đã commit trước khi gọi getById
   const newId = await db.transaction(async (tx) => {
-    // unique (room_id, starts_at)
     const [dup] = await tx
       .select({ id: show_times.id })
       .from(show_times)
@@ -211,7 +199,6 @@ export async function create(
     if (dup)
       throw new ConflictError('Showtime already exists for this room & time');
 
-    // tổng ghế active của room
     const [{ total }] = await tx
       .select({ total: count() })
       .from(seats)
@@ -241,7 +228,6 @@ export async function create(
   return getById(newId);
 }
 
-// ====== REPLACE: list() ======
 export async function list(
   page = 1,
   pageSize = 20,
@@ -296,7 +282,6 @@ export async function list(
   return { items: rows.map(mapRow), total: Number(total) };
 }
 
-// ====== REPLACE (hoặc thêm mới): getById() trả nested ======
 export async function getById(id: string): Promise<ShowtimeListItem> {
   const [r] = await db
     .select({
@@ -334,7 +319,7 @@ export async function getById(id: string): Promise<ShowtimeListItem> {
     .where(eq(show_times.id, id))
     .limit(1);
 
-  if (!r) throw new NotFoundError('Showtime not found'); // nếu bạn đã có NotFoundError
+  if (!r) throw new NotFoundError('Showtime not found');
   return mapRow(r);
 }
 
@@ -377,8 +362,6 @@ export async function update(
   if (typeof patch.isActive === 'boolean') updates.isActive = patch.isActive;
 
   if (Object.keys(updates).length === 0) return getById(id);
-
-  // nếu đổi (roomId|startsAt) bạn có thể kiểm tra trùng lịch tại đây (optional)
 
   await db.update(show_times).set(updates).where(eq(show_times.id, id));
   return getById(id);

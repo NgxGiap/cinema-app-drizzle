@@ -55,38 +55,12 @@ const toStringArray = (v: unknown): string[] | undefined => {
   return undefined;
 };
 
-// type CastItem = { name: string; role?: string };
-// const isCastItem = (x: unknown): x is CastItem => {
-//   if (!x || typeof x !== 'object') return false;
-//   const r = x as Record<string, unknown>;
-//   return (
-//     typeof r.name === 'string' &&
-//     (r.role === undefined || typeof r.role === 'string')
-//   );
-// };
-
-// const normalizeCast = (v: unknown): CastItem[] | undefined => {
-//   if (!Array.isArray(v)) return undefined;
-//   const out: CastItem[] = [];
-//   for (const e of v) {
-//     if (isCastItem(e)) {
-//       const name = e.name.trim();
-//       const role = e.role?.trim();
-//       if (name) out.push(role ? { name, role } : { name });
-//     }
-//   }
-//   return out;
-// };
-
-/** slug chỉ cho chữ cái, số, gạch ngang; không bắt buộc nhưng nên khuyến nghị */
 const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** MySQL DATETIME: nhận ISO-8601 string (ví dụ "2025-09-12T14:30:00Z" hoặc "2025-09-12 14:30:00") */
 const isoOrMysqlDatetime = (s: string) =>
   /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z)?$/.test(s) ||
   /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-/** ---- AUTH validators ---- */
 export const validateAuthRegister = [
   body('name').isString().trim().isLength({ min: 1, max: 100 }),
   body('email').isEmail().isLength({ max: 255 }),
@@ -129,13 +103,13 @@ export const validateMovieCreate = [
     .withMessage('slug must be lowercase, alphanumeric and hyphen-separated'),
   body('title').isString().trim().isLength({ min: 1, max: 255 }),
   body('description').optional().isString(),
-  body('runtimeMinutes').isInt({ min: 1, max: 1000 }).toInt(), // REQUIRED
+  body('runtimeMinutes').isInt({ min: 1, max: 1000 }).toInt(),
   body('releaseDate')
-    .isString() // REQUIRED theo schema
+    .isString()
     .custom((v) => isoOrMysqlDatetime(v))
     .withMessage('releaseDate must be ISO/MYSQL datetime'),
   body('state')
-    .isString() // REQUIRED theo schema
+    .isString()
     .customSanitizer(toUpper)
     .isIn(MOVIE_STATE_ENUM as string[])
     .withMessage(`state must be one of: ${MOVIE_STATE_ENUM.join(', ')}`),
@@ -146,7 +120,6 @@ export const validateMovieCreate = [
   body('genres').optional().customSanitizer(toStringArray).isArray(),
   body('directors').optional().customSanitizer(toStringArray).isArray(),
 
-  // Cast với structure mới
   body('cast')
     .optional()
     .isArray()
@@ -240,14 +213,12 @@ export const validateSlugParam = [
   param('slug').isString().trim().isLength({ min: 1 }),
 ];
 
-/** GET /cinemas?city=&isActive=&q=&page=&pageSize= */
 export const validateCinemaListQuery = [
   query('city').optional().isString().trim().isLength({ min: 1, max: 100 }),
   query('isActive').optional().isBoolean().toBoolean(),
   query('q').optional().isString().trim().isLength({ min: 1, max: 100 }),
 ];
 
-/** POST /cinemas */
 export const validateCinemaCreate = [
   body('name').isString().trim().isLength({ min: 1, max: 255 }),
   body('address').isString().trim().isLength({ min: 1 }),
@@ -256,7 +227,6 @@ export const validateCinemaCreate = [
   body('email').optional().isEmail().isLength({ max: 255 }),
 ];
 
-/** PUT /cinemas/:id */
 export const validateCinemaUpdate = [
   body('name').optional().isString().trim().isLength({ min: 1, max: 255 }),
   body('address').optional().isString().trim().isLength({ min: 1 }),
@@ -267,7 +237,7 @@ export const validateCinemaUpdate = [
 
 export const validateSeatListQuery = [
   query('roomId').optional().isUUID().withMessage('roomId must be UUID'),
-  query('q').optional().isString().trim().isLength({ min: 1, max: 10 }), // tìm theo seatNumber (A1…)
+  query('q').optional().isString().trim().isLength({ min: 1, max: 10 }),
   query('type')
     .optional()
     .isString()
@@ -287,12 +257,10 @@ export const validateSeatMapQuery = [
   }),
 ];
 
-/** Param :id cho get/update/delete */
 export const validateSeatIdParam = [
   param('id').isUUID().withMessage('Invalid id'),
 ];
 
-/** POST /seats */
 export const validateSeatCreate = [
   body('roomId').isUUID().withMessage('roomId is required and must be UUID'),
   body('seatNumber').isString().trim().isLength({ min: 1, max: 10 }),
@@ -309,7 +277,6 @@ export const validateSeatCreate = [
   body('isActive').optional().isBoolean().toBoolean(),
 ];
 
-/** POST /seats/bulk  { items: NewSeat[] } */
 type OverrideItem = {
   seatNumber: string;
   type?: string;
@@ -356,7 +323,6 @@ export const validateSeatLayoutPreview = [
 
 export const validateSeatLayoutApply = [...validateSeatLayoutPreview];
 
-/** PUT /seats/:id */
 export const validateSeatUpdate = [
   body('roomId').optional().isUUID(),
   body('seatNumber').optional().isString().trim().isLength({ min: 1, max: 10 }),
@@ -376,7 +342,6 @@ export const validateSeatUpdate = [
 
 export const validateIdParam = [param('id').isUUID().withMessage('Invalid id')];
 
-/** GET /show_times?cinemaId=&movieId=&roomId=&from=&to=&isActive= */
 const isDateLike = (s: unknown) =>
   typeof s === 'string' &&
   (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?(?:Z)?$/.test(s) ||
@@ -464,7 +429,6 @@ export const validatePagination = [
   query('pageSize').optional().isInt({ min: 1, max: 200 }).toInt(),
 ];
 
-/** Rooms */
 export const validateRoomListQuery = [
   query('cinemaId').optional().isUUID(),
   query('isActive').optional().isBoolean().toBoolean(),
@@ -520,7 +484,7 @@ export const validateBookingHold = [
     .isLength({ min: 8, max: 64 })
     .withMessage('sessionId 8..64 chars'),
   body('userId').optional().isUUID(),
-  body('bookingId').optional().isUUID(), // nullable theo hướng B
+  body('bookingId').optional().isUUID(),
   body('seatIds')
     .isArray({ min: 1 })
     .withMessage('seatIds must be a non-empty array')

@@ -4,10 +4,8 @@ import { db } from '../db';
 import { movies, MOVIE_STATE } from '../db/schema';
 import { ConflictError, NotFoundError } from '../utils/errors/base';
 
-// Sync với schema
 export type MovieState = keyof typeof MOVIE_STATE;
 
-// Sync với validation - cast structure
 export type CastItem = { name: string; role?: string | undefined };
 
 export type MovieListItem = {
@@ -15,7 +13,7 @@ export type MovieListItem = {
   slug: string;
   title: string;
   state: MovieState;
-  releaseDate: Date; // NOT NULL theo schema
+  releaseDate: Date;
   posterUrl: string | null;
   runtimeMinutes: number;
   genres: string[];
@@ -25,7 +23,7 @@ export type MovieDetail = MovieListItem & {
   description: string | null;
   trailerUrl: string | null;
   directors: string[];
-  cast: CastItem[]; // Thay đổi từ string[] thành CastItem[]
+  cast: CastItem[];
   ratingCode: string | null;
   originalLanguage: string | null;
   createdAt: Date;
@@ -39,28 +37,24 @@ export type MovieFilters = {
   toReleaseDate?: Date | undefined;
 };
 
-// Sync với validation requirements
 export type CreateMovieInput = {
-  slug: string; // REQUIRED
-  title: string; // REQUIRED
+  slug: string;
+  title: string;
   description?: string;
-  runtimeMinutes: number; // REQUIRED theo schema
-  releaseDate: Date; // REQUIRED theo schema
-  state: MovieState; // REQUIRED theo schema
+  runtimeMinutes: number;
+  releaseDate: Date;
+  state: MovieState;
   posterUrl?: string;
   trailerUrl?: string;
   genres?: string[];
   directors?: string[];
-  cast?: CastItem[]; // Sync với validation
+  cast?: CastItem[];
   ratingCode?: string;
   originalLanguage?: string;
 };
 
 export type UpdateMovieInput = Partial<CreateMovieInput>;
 
-/* ----------------- helpers ----------------- */
-
-// Helper to create CastItem safely with exactOptionalPropertyTypes
 function createCastItem(name: string, role?: string): CastItem {
   const result: CastItem = { name };
   if (role !== undefined && role.length > 0) {
@@ -69,7 +63,6 @@ function createCastItem(name: string, role?: string): CastItem {
   return result;
 }
 
-// Parse cast từ DB - hỗ trợ cả string[] cũ và CastItem[] mới
 function jsonToCastArray(dbValue: unknown): CastItem[] {
   if (dbValue == null) return [];
 
@@ -95,7 +88,6 @@ function jsonToCastArray(dbValue: unknown): CastItem[] {
       const parsed = JSON.parse(dbValue);
       return jsonToCastArray(parsed);
     } catch {
-      // Fallback: treat as simple string
       const name = dbValue.trim();
       return name.length > 0 ? [createCastItem(name)] : [];
     }
@@ -145,8 +137,6 @@ function whereFromFilters(filters?: MovieFilters): SQL<unknown> | undefined {
   return clauses.length ? and(...clauses) : undefined;
 }
 
-/* ----------------- services - simplified validation ----------------- */
-
 export async function list(
   page = 1,
   pageSize = 20,
@@ -182,7 +172,7 @@ export async function list(
     slug: r.slug,
     title: r.title,
     state: r.state as MovieState,
-    releaseDate: r.releaseDate!, // NOT NULL theo schema
+    releaseDate: r.releaseDate!,
     posterUrl: r.posterUrl ?? null,
     runtimeMinutes: r.runtimeMinutes,
     genres: jsonToStringArray(r.genres),
@@ -200,7 +190,7 @@ export async function getById(id: string): Promise<MovieDetail> {
     slug: r.slug,
     title: r.title,
     state: r.state as MovieState,
-    releaseDate: r.releaseDate!, // NOT NULL
+    releaseDate: r.releaseDate!,
     posterUrl: r.posterUrl ?? null,
     runtimeMinutes: r.runtimeMinutes,
     genres: jsonToStringArray(r.genres),
@@ -223,13 +213,10 @@ export async function getBySlug(slug: string): Promise<MovieDetail> {
     .limit(1);
   if (!r) throw new NotFoundError('Movie not found');
 
-  return getById(r.id); // Reuse logic
+  return getById(r.id);
 }
 
 export async function create(input: CreateMovieInput): Promise<MovieDetail> {
-  // Validation middleware đã xử lý basic validation
-  // Service chỉ cần check business rules
-
   const [dup] = await db
     .select({ id: movies.id })
     .from(movies)
@@ -273,7 +260,6 @@ export async function update(
 
   const data: Partial<typeof movies.$inferInsert> = {};
 
-  // Check slug uniqueness if changed
   if (patch.slug && patch.slug !== existing.slug) {
     const [dup] = await db
       .select({ id: movies.id })
@@ -284,7 +270,6 @@ export async function update(
     data.slug = patch.slug;
   }
 
-  // Simple field updates
   if (patch.title !== undefined) data.title = patch.title;
   if (patch.description !== undefined) data.description = patch.description;
   if (patch.runtimeMinutes !== undefined)

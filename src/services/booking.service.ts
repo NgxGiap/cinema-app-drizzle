@@ -1,6 +1,6 @@
-// src/services/booking.service.ts
 import { randomUUID } from 'crypto';
 import { and, count, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
+import logger from '../utils/logger/logger';
 import { db } from '../db';
 import {
   bookings,
@@ -82,34 +82,34 @@ export type BookingFilters = {
   showtimeId?: string;
 };
 
-// ===== Helpers =====
 async function nextBookingNumber(): Promise<string> {
   return 'BK' + Date.now();
 }
 
-// ===== CLEANUP holds hết hạn =====
 export async function cleanupExpiredHolds(): Promise<void> {
   await db
     .delete(bookingSeatHolds)
     .where(lt(bookingSeatHolds.expiresAt, new Date()));
 }
 
-// ===== HOLD seats =====
 export async function holdSeats(
   input: HoldSeatsInput,
 ): Promise<HoldSeatsResult> {
-  if (!input.showtimeId) throw new BadRequestError('showtimeId is required');
+  if (!input.showtimeId) {
+    logger.warn({ input }, 'Hold seats failed: missing showtimeId');
+    throw new BadRequestError('showtimeId is required');
+  }
   if (!Array.isArray(input.seatIds) || input.seatIds.length === 0) {
+    logger.warn({ input }, 'Hold seats failed: missing seatIds');
     throw new BadRequestError('seatIds is required');
   }
 
   return db.transaction(async (tx) => {
-    // cleanup hết hạn
     await tx
       .delete(bookingSeatHolds)
       .where(lt(bookingSeatHolds.expiresAt, new Date()));
+    logger.debug('Expired holds cleaned before holding seats');
 
-    // showtime hợp lệ
     const [st] = await tx
       .select({
         id: show_times.id,
@@ -120,10 +120,19 @@ export async function holdSeats(
       .where(eq(show_times.id, input.showtimeId))
       .limit(1);
 
-    if (!st || !st.isActive)
+    if (!st || !st.isActive) {
+      logger.error(
+        { showtimeId: input.showtimeId },
+        'Invalid or inactive showtime',
+      );
       throw new BadRequestError('Showtime not found or inactive');
+    }
 
-    // seats hợp lệ
+    logger.info(
+      { showtimeId: st.id, seatIds: input.seatIds },
+      'Processing seat hold request',
+    );
+
     const validSeats = await tx
       .select({
         id: seats.id,
@@ -146,7 +155,6 @@ export async function holdSeats(
       );
     }
 
-    // check BOOKED
     const booked = await tx
       .select({ seatId: bookingSeats.seatId })
       .from(bookingSeats)
@@ -158,7 +166,6 @@ export async function holdSeats(
       );
     if (booked.length > 0) throw new ConflictError('Some seats already booked');
 
-    // check HOLD còn sống
     const live = await tx
       .select({ seatId: bookingSeatHolds.seatId })
       .from(bookingSeatHolds)
@@ -171,7 +178,6 @@ export async function holdSeats(
       );
     if (live.length > 0) throw new ConflictError('Some seats currently held');
 
-    // create booking
     const bookingId = randomUUID();
     const bookingNumber = await nextBookingNumber();
     const expiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000);
@@ -192,7 +198,6 @@ export async function holdSeats(
       totalAmount: '0.00',
     });
 
-    // insert holds (chống race)
     await tx
       .insert(bookingSeatHolds)
       .values(
@@ -201,15 +206,14 @@ export async function holdSeats(
           bookingId,
           showtimeId: input.showtimeId,
           seatId: s.id,
-          sessionId: randomUUID(), // 👈 thêm sessionId
+          sessionId: randomUUID(),
           expiresAt,
         })),
       )
       .onDuplicateKeyUpdate({
-        set: { expiresAt }, // 👈 nếu trùng key thì chỉ update expiresAt
+        set: { expiresAt },
       });
 
-    // result
     const items: HoldItem[] = validSeats.map((s) => ({
       seatId: s.id,
       seatNumber: s.seatNumber,
@@ -217,6 +221,10 @@ export async function holdSeats(
       column: Number(s.column),
     }));
 
+    logger.info(
+      { bookingId, seatIds: input.seatIds },
+      'Seats successfully held',
+    );
     return {
       bookingId,
       bookingNumber,
@@ -227,17 +235,17 @@ export async function holdSeats(
   });
 }
 
-// ===== CANCEL booking =====
-export async function cancel(
-  bookingId: string,
-): Promise<{ id: string; status: (typeof bookings.$inferSelect)['status'] }> {
+export async function cancel(bookingId: string) {
   return db.transaction(async (tx) => {
     const [b] = await tx
       .select()
       .from(bookings)
       .where(eq(bookings.id, bookingId))
       .limit(1);
-    if (!b) throw new NotFoundError('Booking not found');
+    if (!b) {
+      logger.warn({ bookingId }, 'Cancel failed: booking not found');
+      throw new NotFoundError('Booking not found');
+    }
 
     await tx
       .delete(bookingSeatHolds)
@@ -247,28 +255,26 @@ export async function cancel(
       .set({ status: BOOKING_STATUS.CANCELLED, cancelledAt: new Date() })
       .where(eq(bookings.id, bookingId));
 
+    logger.info({ bookingId }, 'Booking cancelled successfully');
     return { id: bookingId, status: BOOKING_STATUS.CANCELLED };
   });
 }
 
-// ===== FINALIZE booking =====
 export async function finalizeBookingSeats(
   bookingId: string,
   unitPricePerSeat?: Record<string, string>,
-): Promise<void> {
+) {
   await db.transaction(async (tx) => {
     const [b] = await tx
-      .select({
-        id: bookings.id,
-        showtimeId: bookings.showtimeId,
-        status: bookings.status,
-        paymentStatus: bookings.paymentStatus,
-      })
+      .select({ id: bookings.id, showtimeId: bookings.showtimeId })
       .from(bookings)
       .where(eq(bookings.id, bookingId))
       .limit(1);
 
-    if (!b) throw new NotFoundError('Booking not found');
+    if (!b) {
+      logger.error({ bookingId }, 'Finalize failed: booking not found');
+      throw new NotFoundError('Booking not found');
+    }
 
     const holds = await tx
       .select({ seatId: bookingSeatHolds.seatId })
@@ -281,13 +287,11 @@ export async function finalizeBookingSeats(
       );
 
     if (holds.length === 0) {
-      const already = await tx
-        .select({ n: sql<number>`COUNT(*)` })
-        .from(bookingSeats)
-        .where(eq(bookingSeats.bookingId, bookingId));
-      if (Number(already[0]?.n ?? 0) > 0) return;
+      logger.warn({ bookingId }, 'Finalize failed: no valid holds');
       throw new ConflictError('No valid holds to finalize');
     }
+
+    logger.info({ bookingId, seats: holds.length }, 'Finalizing booking seats');
 
     const [st] = await tx
       .select({ price: show_times.price })
@@ -327,10 +331,10 @@ export async function finalizeBookingSeats(
         confirmedAt: new Date(),
       })
       .where(eq(bookings.id, bookingId));
+    logger.info({ bookingId }, 'Booking finalized successfully');
   });
 }
 
-// ===== LIST bookings =====
 export async function list(
   page = 1,
   pageSize = 20,
@@ -490,7 +494,6 @@ export async function list(
   return { items, total: Number(total) };
 }
 
-// ===== GET by id =====
 export async function getById(id: string): Promise<BookingListItem> {
   const base = await db
     .select({

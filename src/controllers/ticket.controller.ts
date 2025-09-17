@@ -27,7 +27,6 @@ export async function listByBooking(
   }
 }
 
-/** Quầy soát vé dùng endpoint này để scan */
 export async function scan(req: Request, res: Response, next: NextFunction) {
   try {
     const result = await svc.scanByQrToken(req.body.qrToken, req.body.gate);

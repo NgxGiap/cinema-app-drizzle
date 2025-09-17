@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import * as svc from '../services/movie.service';
 import { makePagination } from '../utils/http';
 
-// Controller chỉ parse basic data, validation đã được middleware xử lý
 export async function listMovies(
   req: Request,
   res: Response,
@@ -12,7 +11,6 @@ export async function listMovies(
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
 
-    // Middleware đã validate, chỉ cần truyền xuống service
     const filters: svc.MovieFilters = {
       q: req.query.q as string,
       state: req.query.state as svc.MovieState,
@@ -66,7 +64,6 @@ export async function createMovie(
   next: NextFunction,
 ) {
   try {
-    // Middleware đã validate, chỉ cần pass data
     const input: svc.CreateMovieInput = req.body;
     const created = await svc.create(input);
     return res.ok(created, 'Movie created');

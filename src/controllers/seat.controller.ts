@@ -1,4 +1,3 @@
-// src/controllers/seat.controller.ts
 import { Request, Response, NextFunction } from 'express';
 import * as svc from '../services/seat.service';
 import { makePagination } from '../utils/http';

@@ -91,8 +91,6 @@ export async function deleteRoom(
   }
 }
 
-/* ====== LAYOUT endpoints ====== */
-
 export async function previewRoomLayout(
   req: Request,
   res: Response,
