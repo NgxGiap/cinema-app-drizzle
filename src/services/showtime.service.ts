@@ -27,13 +27,13 @@ export type UpdateShowtimeInput = {
 };
 
 export type ShowtimeFilters = {
-  cinemaId?: string;
-  movieId?: string;
-  roomId?: string;
-  from?: Date;
-  to?: Date;
-  isActive?: boolean;
-  q?: string;
+  cinemaId?: string | undefined;
+  movieId?: string | undefined;
+  roomId?: string | undefined;
+  from?: Date | undefined;
+  to?: Date | undefined;
+  isActive?: boolean | undefined;
+  q?: string | undefined;
 };
 
 export type ShowtimeListItem = {

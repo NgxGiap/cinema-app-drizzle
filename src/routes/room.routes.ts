@@ -9,7 +9,6 @@ import {
   validateRoomCreate,
   validateRoomUpdate,
   validateIdParam,
-  validateSeatLayout,
   handleValidationErrors,
 } from '../middlewares/validation';
 
@@ -70,7 +69,6 @@ r.post(
   requireAuth,
   authorize(Permission.MANAGE_SEATS),
   validateIdParam,
-  validateSeatLayout,
   handleValidationErrors,
   c.previewRoomLayout,
 );
@@ -80,7 +78,6 @@ r.post(
   requireAuth,
   authorize(Permission.MANAGE_SEATS),
   validateIdParam,
-  validateSeatLayout,
   handleValidationErrors,
   c.applyRoomLayout,
 );

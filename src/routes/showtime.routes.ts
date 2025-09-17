@@ -6,7 +6,6 @@ import { Permission } from '../utils/auth/roles';
 import {
   validatePagination,
   validateShowtimeListQuery,
-  validateShowtimeCreation,
   validateShowtimeUpdate,
   validateIdParam,
   handleValidationErrors,
@@ -21,13 +20,13 @@ r.get(
   validatePagination,
   validateShowtimeListQuery,
   handleValidationErrors,
-  c.listShow_times,
+  c.listShowtimes,
 );
 r.get(
   '/upcoming',
   optionalAuth,
   handleValidationErrors,
-  c.getUpcomingShow_times,
+  c.getUpcomingShowtimes,
 );
 
 /** Admin */
@@ -35,7 +34,7 @@ r.post(
   '/',
   requireAuth,
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
-  validateShowtimeCreation,
+
   handleValidationErrors,
   c.createShowtime,
 );
@@ -65,7 +64,7 @@ r.patch(
   authorize(Permission.MANAGE_MOVIES, Permission.MANAGE_CINEMAS),
   validateIdParam,
   handleValidationErrors,
-  c.toggleShow_timeStatus,
+  c.toggleShowtimeStatus,
 );
 
 r.delete(

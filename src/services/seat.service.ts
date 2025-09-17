@@ -9,6 +9,7 @@ import {
   seats,
 } from '../db/schema';
 import { NotFoundError, ConflictError } from '../utils/errors/base';
+import type { SeatLayout } from '../types/seat-layout';
 
 export type SeatType = 'REGULAR' | 'VIP' | 'COUPLE' | 'DISABLED';
 
@@ -28,11 +29,11 @@ export type SeatListItem = {
 };
 
 export type SeatFilters = {
-  roomId?: string;
-  type?: SeatType | Lowercase<SeatType>;
-  row?: string;
-  isActive?: boolean;
-  q?: string;
+  roomId?: string | undefined;
+  type?: SeatType | undefined;
+  row?: string | undefined;
+  isActive?: boolean | undefined;
+  q?: string | undefined;
 };
 
 export type NewSeat = {
@@ -40,7 +41,7 @@ export type NewSeat = {
   seatNumber: string;
   row: string;
   column: number;
-  type?: SeatType | Lowercase<SeatType>;
+  type?: SeatType;
   price: string;
   isActive?: boolean;
 };
@@ -58,56 +59,22 @@ export type SeatMapItem = {
   status: 'available' | 'holding' | 'booked';
 };
 
-/* helpers */
+export type LayoutApplyMode = 'replace' | 'merge';
 
+/* helpers */
 function normalizeType(t?: string | null): SeatType | undefined {
   if (!t) return undefined;
   const up = t.toUpperCase();
-  if (
-    up === 'REGULAR' ||
-    up === 'VIP' ||
-    up === 'COUPLE' ||
-    up === 'DISABLED'
-  ) {
-    return up as SeatType;
-  }
-  return undefined;
-}
-
-export type LayoutApplyMode = 'replace' | 'merge';
-
-function makeRowLabels(rows: number, startFrom: string): string[] {
-  // Excel-like: A..Z, AA..AZ, BA.. (đủ cho rạp)
-  const labels: string[] = [];
-  const startIndex = Math.max(
-    0,
-    (startFrom.toUpperCase().charCodeAt(0) || 65) - 65,
-  );
-  for (let i = 0; i < rows; i++) {
-    labels.push(indexToLetters(startIndex + i));
-  }
-  return labels;
-}
-function indexToLetters(n: number): string {
-  let s = '';
-  while (n >= 0) {
-    s = String.fromCharCode((n % 26) + 65) + s;
-    n = Math.floor(n / 26) - 1;
-  }
-  return s;
+  return ['REGULAR', 'VIP', 'COUPLE', 'DISABLED'].includes(up)
+    ? (up as SeatType)
+    : undefined;
 }
 
 /* queries */
-
 export async function list(
   page = 1,
   pageSize = 50,
-  filters: {
-    roomId?: string;
-    type?: (typeof seats.$inferSelect)['type'];
-    isActive?: boolean;
-    q?: string;
-  } = {},
+  filters: SeatFilters = {},
 ): Promise<{ items: SeatListItem[]; total: number }> {
   const where = filters.roomId ? eq(seats.roomId, filters.roomId) : undefined;
 
@@ -222,7 +189,7 @@ export async function create(input: NewSeat): Promise<SeatListItem> {
   if (dup) throw new ConflictError('Seat number already exists in this room');
 
   const id = randomUUID();
-  const type = normalizeType(input.type as string | undefined) ?? 'REGULAR';
+  const type = normalizeType(input.type) ?? 'REGULAR';
 
   await db.insert(seats).values({
     id,
@@ -279,7 +246,7 @@ export async function createMany(
       seatNumber: s.seatNumber,
       row: s.row,
       column: s.column,
-      type: normalizeType(s.type as string | undefined) ?? 'REGULAR',
+      type: normalizeType(s.type) ?? 'REGULAR',
       price: s.price,
       isActive: s.isActive ?? true,
     })),
@@ -323,7 +290,7 @@ export async function updateById(
   if (typeof patch.column === 'number') data.column = patch.column;
   if (typeof patch.price === 'string') data.price = patch.price;
   if (typeof patch.isActive === 'boolean') data.isActive = patch.isActive;
-  const t = normalizeType(patch.type as string | undefined);
+  const t = normalizeType(patch.type);
   if (t) data.type = t;
 
   if (Object.keys(data).length) {
@@ -400,9 +367,10 @@ export async function getSeatMapWithStatus(
   });
 }
 
+/* Layout */
 export function buildSeatsFromLayout(
   roomId: string,
-  layout: import('../types/seat-layout').SeatLayout,
+  layout: SeatLayout,
 ): NewSeat[] {
   const out: NewSeat[] = [];
   const defaultType: SeatType = layout.defaultType ?? 'REGULAR';
@@ -454,22 +422,37 @@ export function buildSeatsFromLayout(
   return out;
 }
 
-/** Xem trước (không ghi DB) */
+function makeRowLabels(rows: number, startFrom: string): string[] {
+  const labels: string[] = [];
+  const startIndex = Math.max(
+    0,
+    (startFrom.toUpperCase().charCodeAt(0) || 65) - 65,
+  );
+  for (let i = 0; i < rows; i++) {
+    labels.push(indexToLetters(startIndex + i));
+  }
+  return labels;
+}
+
+function indexToLetters(n: number): string {
+  let s = '';
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+}
+
 export async function previewLayout(
   roomId: string,
-  layout: import('../types/seat-layout').SeatLayout,
+  layout: SeatLayout,
 ): Promise<NewSeat[]> {
   return buildSeatsFromLayout(roomId, layout);
 }
 
-/** Áp layout → ghi DB
- * mode:
- *  - 'replace': xóa tất ghế của room rồi insert mới
- *  - 'merge'  : chỉ insert những seatNumber chưa tồn tại (giữ nguyên ghế cũ)
- */
 export async function applyLayout(
   roomId: string,
-  layout: import('../types/seat-layout').SeatLayout,
+  layout: SeatLayout,
   mode: LayoutApplyMode = 'replace',
 ): Promise<{ inserted: number }> {
   const seatsToInsert = buildSeatsFromLayout(roomId, layout);
@@ -480,7 +463,6 @@ export async function applyLayout(
       await tx.delete(seats).where(eq(seats.roomId, roomId));
     }
 
-    // Lấy seatNumber đã tồn tại (khi merge)
     let filtered = seatsToInsert;
     if (mode === 'merge') {
       const existing = await tx
@@ -492,7 +474,6 @@ export async function applyLayout(
     }
 
     if (filtered.length > 0) {
-      // batch insert
       await tx.insert(seats).values(filtered as (typeof seats.$inferInsert)[]);
     }
   });

@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import * as svc from '../services/booking.service';
 
+// POST /bookings/hold
 export async function holdSeats(
   req: Request,
   res: Response,
@@ -14,7 +15,6 @@ export async function holdSeats(
         : [],
       ...(req.user?.id ? { userId: String(req.user.id) } : {}),
     };
-
     const result = await svc.holdSeats(payload);
     return res.ok(result, 'Seats held for 5 minutes');
   } catch (err) {
@@ -50,6 +50,7 @@ export async function cancelBooking(
   }
 }
 
+// POST /bookings/:id/mark-paid
 export async function markPaid(
   req: Request,
   res: Response,
@@ -62,26 +63,3 @@ export async function markPaid(
     next(err);
   }
 }
-
-export const hold = holdSeats;
-export const cancel = cancelBooking;
-export const getById = getBooking;
-
-/** GET /me/bookings (tuỳ chọn) */
-// export async function myBookings(
-//   req: Request,
-//   res: Response,
-//   next: NextFunction,
-// ) {
-//   try {
-//     if (!req.user?.id) return res.fail('Unauthorized');
-//     // đơn giản: phân trang nhẹ nhàng
-//     const page = Math.max(1, Number(req.query.page) || 1);
-//     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
-//     // bạn có thể viết service riêng; tạm dùng getDetail theo danh sách id (tuỳ schema bạn có userId ở bookings)
-//     // Ở đây để ngắn gọn mình trả 501:
-//     return res.status(501).json({ message: 'Not implemented' });
-//   } catch (err) {
-//     next(err);
-//   }
-// }

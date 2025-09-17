@@ -42,6 +42,16 @@ export const PAYMENT_STATUS = {
   REFUNDED: 'REFUNDED',
 } as const;
 
+export const PAYMENT_METHOD = {
+  CARD: 'CARD',
+  CASH: 'CASH',
+  BANK_TRANSFER: 'BANK_TRANSFER',
+  VNPAY: 'VNPAY',
+  MOMO: 'MOMO',
+  STRIPE: 'STRIPE',
+  PAYPAL: 'PAYPAL',
+} as const;
+
 export const TICKET_STATUS = {
   ISSUED: 'ISSUED',
   CHECKED_IN: 'CHECKED_IN',
@@ -348,33 +358,32 @@ export const bookingSeats = mysqlTable(
 export const bookingSeatHolds = mysqlTable(
   'booking_seat_holds',
   {
-    id: varchar('id', { length: 36 })
-      .primaryKey()
-      .default(sql`(uuid())`),
+    id: varchar('id', { length: 36 }).primaryKey(),
 
-    bookingId: varchar('booking_id', { length: 36 })
-      .notNull()
-      .references(() => bookings.id, { onDelete: 'cascade' }),
+    // HƯỚNG B: không bắt buộc gắn với booking ngay từ đầu
+    bookingId: varchar('booking_id', { length: 36 }), // <- BỎ .notNull()
 
-    showtimeId: varchar('showtime_id', { length: 36 })
-      .notNull()
-      .references(() => show_times.id, { onDelete: 'cascade' }),
+    // Định danh phiên/thiết bị để anti-double click & resume
+    sessionId: varchar('session_id', { length: 64 }).notNull(),
 
-    seatId: varchar('seat_id', { length: 36 })
-      .notNull()
-      .references(() => seats.id, { onDelete: 'restrict' }),
-
+    showtimeId: varchar('showtime_id', { length: 36 }).notNull(),
+    seatId: varchar('seat_id', { length: 36 }).notNull(),
     expiresAt: datetime('expires_at').notNull(),
 
+    userId: varchar('user_id', { length: 36 }),
+
     createdAt: datetime('created_at')
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: datetime('updated_at')
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
   },
-  (t) => ({
-    // mỗi suất chiếu, 1 ghế chỉ có 1 hold sống tại một thời điểm
-    uqLive: uniqueIndex('uq_hold_live').on(t.showtimeId, t.seatId),
-    idxExpires: index('idx_hold_expires').on(t.expiresAt),
-    idxBooking: index('idx_hold_booking').on(t.bookingId),
+  (table) => ({
+    uqHoldLive: uniqueIndex('uq_hold_live').on(table.showtimeId, table.seatId),
+    idxHoldSession: index('idx_hold_session').on(table.sessionId),
+    idxHoldExpires: index('idx_hold_expires').on(table.expiresAt),
+    idxHoldBooking: index('idx_hold_booking').on(table.bookingId),
   }),
 );
 
@@ -390,7 +399,10 @@ export const payments = mysqlTable(
       .references(() => bookings.id, { onDelete: 'cascade' }),
     amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
     currency: varchar('currency', { length: 3 }).notNull().default('VND'),
-    method: varchar('method', { length: 50 }),
+    method: mysqlEnum(
+      'method',
+      Object.values(PAYMENT_METHOD) as [string, ...string[]],
+    ),
     status: mysqlEnum(
       'status',
       Object.values(PAYMENT_STATUS) as [string, ...string[]],
