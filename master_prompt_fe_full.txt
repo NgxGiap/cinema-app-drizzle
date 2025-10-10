@@ -1,0 +1,287 @@
+# MASTER PROMPT — Build CGV-style Frontend (TypeScript, No `any`) on Existing BE
+
+**Context**
+- Bạn đã có Backend (Node.js + TypeScript, Drizzle + MySQL) với các module: `auth, user, movie, cinema, room, seat, showtime, booking, ticket, payment`.
+- Yêu cầu tạo Frontend riêng trong thư mục `/frontend` dùng **Next.js + TypeScript**.
+- Yêu cầu:
+  - **Không dùng `any`**, chỉ dùng `type` thay vì `interface`.
+  - Toàn bộ dữ liệu từ DB qua API BE, không truy vấn DB trực tiếp.
+  - Các endpoint backend đã có (auth, movies, cinemas, rooms, seats, showtimes, bookings, payments, tickets).
+  - Auth bắt buộc để giữ ghế & thanh toán.
+  - Seat map endpoint: `GET /seats/rooms/:roomId/show_times/:showtimeId/seat-map`.
+  - `POST /payments/intent` trả thêm `redirectUrl?: string` hoặc `qrData?: string`.
+  - `GET /payments/:id` mở cho **chủ booking** để FE poll status.
+
+---
+
+## 1. Tech stack & cấu hình
+- Next.js 14 (App Router), React 18.
+- TypeScript strict.
+- Zustand cho state.
+- React Query cho data fetching.
+- ESLint + Prettier.
+- ENV:
+  ```
+  NEXT_PUBLIC_API_BASE_URL=http://localhost:3000/api
+  NEXT_PUBLIC_HOLD_COUNTDOWN_SEC=300
+  ```
+
+---
+
+## 2. Cấu trúc thư mục FE
+```
+/frontend
+  /src
+    /app
+      page.tsx                          // Home
+      movies/page.tsx                   // Danh sách phim
+      movies/[movieId]/page.tsx         // Chi tiết phim
+      showtimes/page.tsx                // Chọn rạp/ngày/suất
+      booking/[showtimeId]/page.tsx     // Seat map + combo + hold
+      checkout/page.tsx                 // Thanh toán
+      tickets/page.tsx                  // Vé của tôi
+      auth/login/page.tsx
+      auth/register/page.tsx
+      profile/page.tsx
+      layout.tsx
+    /api
+      http.ts
+      endpoints.ts
+      hooks.ts
+    /types
+      index.ts
+    /store
+      authStore.ts
+      bookingStore.ts
+    /components
+      MovieCard.tsx
+      CinemaPicker.tsx
+      DateTabs.tsx
+      ShowtimeList.tsx
+      SeatMap.tsx
+      ComboSelector.tsx
+      OrderSummary.tsx
+      PaymentMethods.tsx
+      QRCodeTicket.tsx
+      Guard.tsx
+      Skeletons.tsx
+      ErrorBoundary.tsx
+    /utils
+      money.ts
+      time.ts
+      seat.ts
+      guard.ts
+    /styles
+      globals.css
+  package.json
+  tsconfig.json
+  .eslintrc.js
+  .prettierrc
+  README.md
+```
+
+---
+
+## 3. Endpoints mapping
+```ts
+export const endpoints = {
+  auth: {
+    login: () => `/auth/login`,
+    register: () => `/auth/register`,
+    me: () => `/users/me`,
+  },
+  movies: {
+    list: (q?: string) => `/movies${q ? `?${q}` : ''}`,
+    detail: (id: string) => `/movies/${id}`,
+    bySlug: (slug: string) => `/movies/slug/${slug}`,
+  },
+  cinemas: {
+    list: () => `/cinemas`,
+    cities: () => `/cinemas/cities`,
+    detail: (id: string) => `/cinemas/${id}`,
+  },
+  showtimes: {
+    list: (q?: string) => `/showtimes${q ? `?${q}` : ''}`,
+    upcoming: () => `/showtimes/upcoming`,
+    detail: (id: string) => `/showtimes/${id}`,
+  },
+  seats: {
+    seatMap: (roomId: string, showtimeId: string) => `/seats/rooms/${roomId}/show_times/${showtimeId}/seat-map`,
+  },
+  bookings: {
+    hold: () => `/bookings/hold`,
+    mine: () => `/bookings/mine`,
+    detail: (id: string) => `/bookings/${id}`,
+    cancel: (id: string) => `/bookings/${id}/cancel`,
+  },
+  payments: {
+    intent: () => `/payments/intent`,
+    detail: (id: string) => `/payments/${id}`,
+  },
+  tickets: {
+    byBooking: (bookingId: string) => `/tickets/by-booking/${bookingId}`,
+    detail: (id: string) => `/tickets/${id}`,
+  },
+} as const;
+```
+
+---
+
+## 4. Types (TypeScript, không `any`)
+```ts
+export type Id = string;
+
+export type MovieState = 'NOW_SHOWING' | 'COMING_SOON';
+export type SeatType = 'REGULAR' | 'VIP' | 'COUPLE' | 'DISABLED';
+export type SeatStatus = 'available' | 'holding' | 'booked';
+export type PaymentMethod = 'MOMO' | 'ZALOPAY' | 'CARD';
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'CANCELLED';
+export type TicketStatus = 'ACTIVE' | 'USED' | 'CANCELLED';
+
+export type ApiHeader = { success: boolean; code: string; message: string; timestamp: string; requestId?: string };
+export type ApiResponse<T> = { header: ApiHeader; data: T | null };
+
+export type Movie = {
+  id: Id;
+  title: string;
+  slug: string;
+  durationMin: number;
+  genres: string[];
+  rating?: number;
+  posterUrl: string;
+  trailerUrl?: string;
+  state: MovieState;
+};
+
+export type Cinema = { id: Id; name: string; address: string; city: string; isActive: boolean };
+export type Room = { id: Id; cinemaId: Id; name: string; isActive: boolean };
+
+export type Showtime = {
+  id: Id;
+  movieId: Id;
+  cinemaId: Id;
+  roomId: Id;
+  startAt: string;
+  format: '2D' | '3D' | 'IMAX';
+  basePrice: string;
+  isActive: boolean;
+};
+
+export type SeatMapItem = {
+  id: Id;
+  seatNumber: string;
+  row: string;
+  column: number;
+  type: SeatType;
+  price: string;
+  isActive: boolean;
+  status: SeatStatus;
+};
+
+export type ComboItem = { id: Id; name: string; price: string; quantity: number };
+
+export type HoldPayload = { showtimeId: Id; seatIds: Id[]; combos?: ComboItem[] };
+
+export type Booking = {
+  id: Id;
+  userId: Id;
+  showtimeId: Id;
+  amount: string;
+  status: 'HOLDING' | 'CANCELLED' | 'PAID';
+  expiresAt: string;
+  createdAt: string;
+};
+
+export type PaymentIntentRequest = { bookingId: Id; method: PaymentMethod };
+export type Payment = {
+  id: Id;
+  bookingId: Id;
+  amount: string;
+  currency: string;
+  method: PaymentMethod;
+  status: PaymentStatus;
+  transactionId: string | null;
+  processedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type PaymentIntentResponse = { payment: Payment; redirectUrl?: string; qrData?: string };
+
+export type Ticket = {
+  id: Id;
+  bookingId: Id;
+  qrData: string;
+  seatLabels: string[];
+  cinemaName: string;
+  movieTitle: string;
+  startAt: string;
+  status: TicketStatus;
+};
+```
+
+---
+
+## 5. HTTP wrapper
+```ts
+const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
+
+export async function apiGet<T>(path: string, token?: string): Promise<T> {
+  const r = await fetch(`${BASE}${path}`, {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+  const json = (await r.json()) as ApiResponse<T>;
+  if (!json.header?.success || !json.data) throw new Error(json.header?.message ?? 'Unknown error');
+  return json.data;
+}
+
+export async function apiPost<TReq, TRes>(path: string, body: TReq, token?: string): Promise<TRes> {
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    credentials: 'include',
+  });
+  const json = (await r.json()) as ApiResponse<TRes>;
+  if (!json.header?.success || !json.data) throw new Error(json.header?.message ?? 'Unknown error');
+  return json.data;
+}
+```
+
+---
+
+## 6. User Flow (giống CGV)
+1. **Home** → hiển thị phim đang chiếu/sắp chiếu.
+2. **Movie Detail** → trailer, mô tả, CTA “Đặt vé”.
+3. **Chọn rạp/ngày/suất** → filter rạp, tab ngày, chọn giờ chiếu.
+4. **Booking page (Seat Map + Combo)**:
+   - Yêu cầu login.
+   - Render sơ đồ ghế, chọn ghế.
+   - Gọi `POST /bookings/hold`.
+   - Hiển thị countdown giữ ghế.
+5. **Checkout**:
+   - Tóm tắt vé + combo.
+   - Chọn phương thức thanh toán.
+   - `POST /payments/intent` → nhận `redirectUrl` hoặc `qrData`.
+   - Nếu redirectUrl → điều hướng, nếu qrData → render QR.
+   - Poll `GET /payments/:id` đến khi `PAID`/`FAILED`.
+6. **Done**:
+   - Lấy vé qua `GET /tickets/by-booking/:bookingId`.
+   - Render QR vé.
+7. **Tickets**:
+   - `GET /bookings/mine` → hiển thị danh sách vé của tôi.
+
+---
+
+## 7. UX/Logic quan trọng
+- Countdown giữ ghế, toast khi ghế bị chiếm.
+- Guard login ở booking/checkout/tickets.
+- Polling seat map & payment.
+- Tự hủy booking khi hết hạn hoặc cancel.
+
+---
+
+## Acceptance Criteria
+1. Không có `any`.
+2. FE kết nối BE qua API thật.
+3. Flow end-to-end: Movie → Showtime → Seat → Hold → Payment → Ticket.

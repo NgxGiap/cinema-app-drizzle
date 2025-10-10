@@ -11,7 +11,7 @@ import router from './routes';
 
 const app = express();
 app.use(helmet());
-app.use(cors());
+app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
 app.use(express.json());
 
 app.use(httpLogger);
@@ -22,7 +22,7 @@ app.use(responseWrapper);
 app.use('/api', router);
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () =>
   logger.info(`Cinema API listening on http://localhost:${PORT}`),
 );

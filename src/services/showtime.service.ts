@@ -44,6 +44,11 @@ export type ShowtimeListItem = {
   bookedSeats: number;
   availableSeats: number;
   isActive: boolean;
+
+  movieId: string;
+  cinemaId: string;
+  roomId: string;
+
   movie: {
     id: string;
     slug: string;
@@ -102,6 +107,9 @@ function mapRow(r: {
     bookedSeats: booked,
     availableSeats: Math.max(0, total - booked),
     isActive: r.isActive,
+    movieId: r.movie?.id ?? '',
+    cinemaId: r.cinema?.id ?? '',
+    roomId: r.room?.id ?? '',
     movie: {
       id: r.movie?.id ?? '',
       slug: r.movie?.slug ?? '',
@@ -244,6 +252,10 @@ export async function list(
       totalSeats: show_times.totalSeats,
       bookedSeats: show_times.bookedSeats,
       isActive: show_times.isActive,
+
+      movieId: show_times.movieId,
+      cinemaId: show_times.cinemaId,
+      roomId: show_times.roomId,
 
       movie: {
         id: movies.id,

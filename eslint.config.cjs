@@ -18,7 +18,10 @@ module.exports = [
       parserOptions: {
         ecmaVersion: 2020,
         sourceType: "module",
-        project: "./tsconfig.eslint.json",
+        project: [
+          "./frontend/tsconfig.eslint.json",
+          "./tsconfig.eslint.json",
+        ],
         tsconfigRootDir: __dirname
       },
     },
